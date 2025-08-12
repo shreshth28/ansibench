@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ansibench"
+version = "0.0.1"
+description = "benchmark stuff on remote machines with ansible"
+requires-python = ">=3.10"
+dependencies = [
+    "ansible-core>=2.16",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+ansibench = "ansibench.cli:main"
+
+[tool.setuptools]
+packages = ["ansibench"]
