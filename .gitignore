@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 results/
 inventory.ini
+testenv/.keys/
+testenv/id_ed25519.pub
