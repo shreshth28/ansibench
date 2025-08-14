@@ -26,7 +26,7 @@ class Host:
         return self.vars.get("ansible_user")
 
 
-def _ansible_bin(name):
+def ansible_bin(name):
     # prefer the one in our venv so we don't need ansible on PATH
     local = Path(sys.executable).parent / name
     if local.exists():
@@ -46,7 +46,7 @@ def load(path):
 
     env = dict(os.environ, ANSIBLE_INVENTORY_UNPARSED_WARNING="False")
     proc = subprocess.run(
-        [_ansible_bin("ansible-inventory"), "-i", str(path), "--list"],
+        [ansible_bin("ansible-inventory"), "-i", str(path), "--list"],
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,

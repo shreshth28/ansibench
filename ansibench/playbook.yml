@@ -1,0 +1,70 @@
+# driven by ansibench/engine.py, all ab_* vars come from there
+- hosts: "{{ ab_hosts }}"
+  gather_facts: false
+  tasks:
+    - name: find home
+      ansible.builtin.shell: echo "$HOME"
+      register: home
+      changed_when: false
+
+    - ansible.builtin.set_fact:
+        workdir: "{{ home.stdout }}/.ansibench/{{ ab_name }}"
+
+    - name: fresh workdir
+      ansible.builtin.file:
+        path: "{{ workdir }}"
+        state: "{{ item }}"
+      loop: [absent, directory]
+
+    - name: clone
+      ansible.builtin.git:
+        repo: "{{ ab_repo }}"
+        dest: "{{ workdir }}/src"
+        version: "{{ ab_ref | default('HEAD', true) }}"
+        force: true
+      when: ab_repo | default('', true) | length > 0
+
+    - name: copy local source
+      ansible.builtin.copy:
+        src: "{{ ab_path }}/"
+        dest: "{{ workdir }}/src/"
+        mode: preserve
+      when: ab_path | default('', true) | length > 0
+
+    - name: src dir (if there's no source)
+      ansible.builtin.file:
+        path: "{{ workdir }}/src"
+        state: directory
+
+    - name: ship runner + job
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ workdir }}/{{ item.dest }}"
+      loop:
+        - { src: "{{ ab_runner }}", dest: runner.py }
+        - { src: "{{ ab_job }}", dest: job.json }
+
+    - name: build
+      ansible.builtin.command: python3 runner.py build job.json
+      args:
+        chdir: "{{ workdir }}"
+      changed_when: true
+      ignore_errors: true
+      register: build
+
+    - name: pack results
+      ansible.builtin.command: tar czf ../out.tgz .
+      args:
+        chdir: "{{ workdir }}/out"
+      changed_when: false
+
+    - name: fetch results
+      ansible.builtin.fetch:
+        src: "{{ workdir }}/out.tgz"
+        dest: "{{ ab_results }}/{{ inventory_hostname }}.tgz"
+        flat: true
+
+    - name: fail if the build broke
+      ansible.builtin.fail:
+        msg: "build failed, see {{ ab_results }}/{{ inventory_hostname }}/"
+      when: build.rc != 0

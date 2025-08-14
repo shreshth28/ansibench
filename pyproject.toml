@@ -20,3 +20,6 @@ ansibench = "ansibench.cli:main"
 
 [tool.setuptools]
 packages = ["ansibench"]
+
+[tool.setuptools.package-data]
+ansibench = ["playbook.yml"]
