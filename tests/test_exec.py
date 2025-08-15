@@ -71,3 +71,43 @@ def test_exec_build_failure(target, tmp_path, capsys):
     assert "ansible-playbook failed" in capsys.readouterr().err
     # results still come back so you can look at the log
     assert build_info(latest(tmp_path))["builds"][0]["exit_code"] == 3
+
+
+def results_of(results_dir):
+    return json.loads((results_dir / "target" / "results.json").read_text())
+
+
+def test_exec_times_the_command(target, tmp_path):
+    burn = "python3 -c 'import time\nt=time.time()\nwhile time.time()-t<0.5: pass\nprint(\"done\")'"
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path), "--", burn]) == 0
+    d = latest(tmp_path)
+    (r,) = results_of(d)
+    assert r["exit_code"] == 0
+    assert r["wall_s"] >= 0.5
+    assert r["user_s"] > 0.3  # it's a busy loop, should be almost all user time
+    assert (d / "target" / r["stdout"]).read_text().strip() == "done"
+
+
+def test_exec_maxrss(target, tmp_path):
+    hog = "python3 -c 'b = bytearray(200 * 1024 * 1024); b[::4096] = b\"x\" * len(b[::4096])'"
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path), "--", hog]) == 0
+    (r,) = results_of(latest(tmp_path))
+    assert r["maxrss_kb"] > 200 * 1024
+
+
+def test_exec_nonzero_exit_is_recorded_not_fatal(target, tmp_path, capsys):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "--", "echo oops >&2; exit 7"]) == 0
+    d = latest(tmp_path)
+    (r,) = results_of(d)
+    assert r["exit_code"] == 7
+    assert (d / "target" / r["stderr"]).read_text().strip() == "oops"
+    assert "exit 7" in capsys.readouterr().out
+
+
+def test_exec_multi_word_command(target, tmp_path):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "--", "echo", "two words", "x"]) == 0
+    d = latest(tmp_path)
+    (r,) = results_of(d)
+    assert (d / "target" / r["stdout"]).read_text() == "two words x\n"

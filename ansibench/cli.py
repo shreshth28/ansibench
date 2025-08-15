@@ -1,5 +1,6 @@
 import argparse
 import json
+import shlex
 import sys
 
 from ansibench import __version__, engine, inventory
@@ -25,11 +26,20 @@ def source_from_args(args):
     return None
 
 
+def command_from_args(words):
+    if not words:
+        return None
+    # one arg = treat it as a shell string, so `-- "make run | tee log"` works
+    return words[0] if len(words) == 1 else shlex.join(words)
+
+
 def cmd_exec(args):
     hosts = inventory.select(inventory.load(args.inventory), args.pattern)
+    cmd = command_from_args(args.command)
     job = {
         "name": args.name or "exec",
         "builds": args.build or [],
+        "runs": [{"variant": "default", "cmd": cmd}] if cmd else [],
     }
     results = engine.run(
         job, args.inventory, ",".join(h.name for h in hosts),
@@ -40,6 +50,10 @@ def cmd_exec(args):
         sha = (info["git_sha"] or "-")[:10]
         ok = "ok" if all(b["exit_code"] == 0 for b in info["builds"]) else "FAILED"
         print(f"{h.name}: sha {sha}, build {ok}")
+        res = results / h.name / "results.json"
+        for r in json.loads(res.read_text()) if res.exists() else []:
+            print(f"  wall {r['wall_s']:.3f}s  user {r['user_s']:.3f}s  sys {r['sys_s']:.3f}s  "
+                  f"maxrss {r['maxrss_kb'] / 1024:.1f}MB  exit {r['exit_code']}")
     print(f"results: {results}")
     return 0
 
@@ -54,7 +68,8 @@ def build_parser():
     hp.add_argument("-i", "--inventory", default="inventory.ini")
     hp.set_defaults(func=cmd_hosts)
 
-    ep = sub.add_parser("exec", help="clone/copy code to a host, build it")
+    ep = sub.add_parser("exec", help="clone/copy code to a host, build it, time a command",
+                        usage="ansibench exec HOST [options] [-- COMMAND ...]")
     ep.add_argument("pattern", help="host or group name")
     ep.add_argument("-i", "--inventory", default="inventory.ini")
     ep.add_argument("--repo", help="git url to clone on the target")
@@ -70,8 +85,16 @@ def build_parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # everything after -- is the command to bench. split it off by hand,
+    # argparse.REMAINDER eats options that come before it
+    command = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
     parser = build_parser()
     args = parser.parse_args(argv)
+    args.command = command
     if not args.cmd:
         parser.print_help()
         return 1
@@ -83,4 +106,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
