@@ -52,6 +52,13 @@
       ignore_errors: true
       register: build
 
+    - name: bench
+      ansible.builtin.command: python3 runner.py bench job.json
+      args:
+        chdir: "{{ workdir }}"
+      changed_when: true
+      when: build.rc == 0
+
     - name: pack results
       ansible.builtin.command: tar czf ../out.tgz .
       args:
