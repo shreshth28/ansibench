@@ -8,6 +8,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from ansibench import report
 from ansibench.inventory import InventoryError, ansible_bin
 
 HERE = Path(__file__).resolve().parent
@@ -70,6 +71,7 @@ def run(job, inventory_path, hosts, source=None, results_root="results", verbose
 
     (results / "ansible.log").write_text(proc.stdout or "")
     unpack(results)
+    report.write_csv(results)
 
     if proc.returncode != 0:
         raise RunError(f"ansible-playbook failed (exit {proc.returncode}), log: {results / 'ansible.log'}")

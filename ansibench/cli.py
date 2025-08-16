@@ -40,6 +40,9 @@ def cmd_exec(args):
         "name": args.name or "exec",
         "builds": args.build or [],
         "runs": [{"variant": "default", "cmd": cmd}] if cmd else [],
+        "repeat": args.repeat,
+        "warmup": args.warmup,
+        "timeout": args.timeout,
     }
     results = engine.run(
         job, args.inventory, ",".join(h.name for h in hosts),
@@ -52,8 +55,9 @@ def cmd_exec(args):
         print(f"{h.name}: sha {sha}, build {ok}")
         res = results / h.name / "results.json"
         for r in json.loads(res.read_text()) if res.exists() else []:
-            print(f"  wall {r['wall_s']:.3f}s  user {r['user_s']:.3f}s  sys {r['sys_s']:.3f}s  "
-                  f"maxrss {r['maxrss_kb'] / 1024:.1f}MB  exit {r['exit_code']}")
+            flag = "  TIMEOUT" if r.get("timed_out") else ""
+            print(f"  #{r['rep']}  wall {r['wall_s']:.3f}s  user {r['user_s']:.3f}s  sys {r['sys_s']:.3f}s  "
+                  f"maxrss {r['maxrss_kb'] / 1024:.1f}MB  exit {r['exit_code']}{flag}")
     print(f"results: {results}")
     return 0
 
@@ -76,6 +80,9 @@ def build_parser():
     ep.add_argument("--ref", default="", help="branch, tag or sha (default: remote HEAD)")
     ep.add_argument("--path", help="local dir to copy over instead of cloning")
     ep.add_argument("--build", action="append", help="build command, can repeat")
+    ep.add_argument("-n", "--repeat", type=int, default=1, help="measured runs (default 1)")
+    ep.add_argument("-w", "--warmup", type=int, default=0, help="unmeasured runs first (default 0)")
+    ep.add_argument("-t", "--timeout", type=float, help="kill a run after this many seconds")
     ep.add_argument("--name", help="name for the results dir")
     ep.add_argument("--results", default="results", help="where results go (default: ./results)")
     ep.add_argument("-v", "--verbose", action="store_true", help="show ansible output")

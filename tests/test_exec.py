@@ -111,3 +111,21 @@ def test_exec_multi_word_command(target, tmp_path):
     d = latest(tmp_path)
     (r,) = results_of(d)
     assert (d / "target" / r["stdout"]).read_text() == "two words x\n"
+
+
+def test_exec_repeat_warmup_and_csv(target, tmp_path):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "-n", "4", "-w", "1", "--", "true"]) == 0
+    d = latest(tmp_path)
+    assert len(results_of(d)) == 4
+    lines = (d / "runs.csv").read_text().splitlines()
+    assert lines[0].startswith("host,variant,rep,wall_s")
+    assert len(lines) == 5 and lines[1].startswith("target,default,0,")
+
+
+def test_exec_timeout(target, tmp_path, capsys):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "-t", "1", "--", "sleep 60"]) == 0
+    (r,) = results_of(latest(tmp_path))
+    assert r["timed_out"] and r["wall_s"] < 5
+    assert "TIMEOUT" in capsys.readouterr().out
