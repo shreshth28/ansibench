@@ -1,6 +1,7 @@
 """Reads the per-host results.json files and turns them into tables."""
 import csv
 import json
+import statistics
 from pathlib import Path
 
 BASE_COLS = ["host", "variant", "rep", "wall_s", "user_s", "sys_s", "maxrss_kb", "exit_code", "timed_out"]
@@ -31,3 +32,86 @@ def write_csv(results_dir, rows=None):
         w.writeheader()
         w.writerows(rows)
     return path
+
+
+NOISY_CV = 0.05
+
+
+def summarize(rows):
+    """Group runs by host + variant + params and work out wall-time stats."""
+    groups = {}
+    for r in rows:
+        params = tuple(sorted((k, r[k]) for k in r if k.startswith("param.")))
+        groups.setdefault((r["host"], r["variant"], params), []).append(r)
+
+    out = []
+    for (host, variant, params), runs in groups.items():
+        ok = [r for r in runs if r["exit_code"] == 0 and not r.get("timed_out")]
+        walls = [r["wall_s"] for r in ok]
+        s = {
+            "host": host,
+            "variant": variant,
+            "params": {k[len("param."):]: v for k, v in params},
+            "n": len(runs),
+            "failed": len(runs) - len(ok),
+            "timed_out": sum(1 for r in runs if r.get("timed_out")),
+            "exit_codes": sorted({r["exit_code"] for r in runs if r["exit_code"] != 0 and not r.get("timed_out")}),
+        }
+        if walls:
+            s["median_s"] = statistics.median(walls)
+            s["min_s"] = min(walls)
+            s["stdev_s"] = statistics.stdev(walls) if len(walls) > 1 else 0.0
+            mean = statistics.fmean(walls)
+            s["cv"] = s["stdev_s"] / mean if mean > 0 else 0.0
+            s["maxrss_kb"] = max(r["maxrss_kb"] for r in ok)
+        out.append(s)
+    return out
+
+
+def _fmt_s(x):
+    if x is None:
+        return "-"
+    return f"{x * 1000:.2f}ms" if x < 1 else f"{x:.3f}s"
+
+
+def table(summary):
+    """Markdown table, reads fine in a terminal too."""
+    has_params = any(s["params"] for s in summary)
+    head = ["host", "variant"] + (["params"] if has_params else []) + \
+        ["n", "median", "min", "stdev", "cv", "maxrss", ""]
+    lines = ["| " + " | ".join(head) + " |", "|" + "|".join("---" for _ in head) + "|"]
+    for s in summary:
+        note = []
+        if s.get("timed_out"):
+            note.append(f"{s['timed_out']} timed out")
+        if s["failed"] - s.get("timed_out", 0):
+            codes = ",".join(map(str, s.get("exit_codes", [])))
+            note.append(f"{s['failed'] - s.get('timed_out', 0)} failed (exit {codes})")
+        if s.get("cv", 0) > NOISY_CV:
+            note.append("noisy")
+        cells = [s["host"], s["variant"]]
+        if has_params:
+            cells.append(" ".join(f"{k}={v}" for k, v in s["params"].items()) or "-")
+        cells += [
+            str(s["n"]),
+            _fmt_s(s.get("median_s")),
+            _fmt_s(s.get("min_s")),
+            _fmt_s(s.get("stdev_s")),
+            f"{s['cv'] * 100:.1f}%" if "cv" in s else "-",
+            f"{s['maxrss_kb'] / 1024:.1f}MB" if "maxrss_kb" in s else "-",
+            ", ".join(note),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def write_summary(results_dir, rows=None):
+    rows = load_rows(results_dir) if rows is None else rows
+    summary = summarize(rows)
+    text = table(summary)
+    noisy = [s for s in summary if s.get("cv", 0) > NOISY_CV]
+    if noisy:
+        text += (f"\n\nheads up: {len(noisy)} row(s) have >{NOISY_CV:.0%} variation between runs, "
+                 "numbers might not mean much. more --repeat, or pin the machine down.")
+    (Path(results_dir) / "summary.md").write_text(f"# {Path(results_dir).name}\n\n{text}\n")
+    return text

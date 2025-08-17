@@ -71,7 +71,9 @@ def run(job, inventory_path, hosts, source=None, results_root="results", verbose
 
     (results / "ansible.log").write_text(proc.stdout or "")
     unpack(results)
-    report.write_csv(results)
+    rows = report.load_rows(results)
+    report.write_csv(results, rows)
+    report.write_summary(results, rows)
 
     if proc.returncode != 0:
         raise RunError(f"ansible-playbook failed (exit {proc.returncode}), log: {results / 'ansible.log'}")

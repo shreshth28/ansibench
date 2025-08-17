@@ -102,7 +102,7 @@ def test_exec_nonzero_exit_is_recorded_not_fatal(target, tmp_path, capsys):
     (r,) = results_of(d)
     assert r["exit_code"] == 7
     assert (d / "target" / r["stderr"]).read_text().strip() == "oops"
-    assert "exit 7" in capsys.readouterr().out
+    assert "1 failed (exit 7)" in capsys.readouterr().out
 
 
 def test_exec_multi_word_command(target, tmp_path):
@@ -128,4 +128,13 @@ def test_exec_timeout(target, tmp_path, capsys):
                  "-t", "1", "--", "sleep 60"]) == 0
     (r,) = results_of(latest(tmp_path))
     assert r["timed_out"] and r["wall_s"] < 5
-    assert "TIMEOUT" in capsys.readouterr().out
+    assert "1 timed out" in capsys.readouterr().out
+
+
+def test_exec_prints_summary(target, tmp_path, capsys):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "-n", "3", "--", "true"]) == 0
+    out = capsys.readouterr().out
+    assert "| host | variant | n | median" in out
+    assert "| target | default | 3 |" in out
+    assert (latest(tmp_path) / "summary.md").exists()

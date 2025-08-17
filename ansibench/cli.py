@@ -53,11 +53,10 @@ def cmd_exec(args):
         sha = (info["git_sha"] or "-")[:10]
         ok = "ok" if all(b["exit_code"] == 0 for b in info["builds"]) else "FAILED"
         print(f"{h.name}: sha {sha}, build {ok}")
-        res = results / h.name / "results.json"
-        for r in json.loads(res.read_text()) if res.exists() else []:
-            flag = "  TIMEOUT" if r.get("timed_out") else ""
-            print(f"  #{r['rep']}  wall {r['wall_s']:.3f}s  user {r['user_s']:.3f}s  sys {r['sys_s']:.3f}s  "
-                  f"maxrss {r['maxrss_kb'] / 1024:.1f}MB  exit {r['exit_code']}{flag}")
+    if job["runs"]:
+        print()
+        print((results / "summary.md").read_text().split("\n", 2)[2].rstrip())
+        print()
     print(f"results: {results}")
     return 0
 

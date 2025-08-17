@@ -31,3 +31,19 @@ def test_bench_repeat_and_warmup(tmp_path):
     assert [r["rep"] for r in recs] == [0, 1, 2]
     # warmups still actually ran
     assert (tmp_path / "src" / "count").read_text().count("run") == 5
+
+
+def test_summary_stats_and_noise():
+    from ansibench import report
+    rows = [{"host": "h", "variant": "v", "param.n": 1, "wall_s": w, "maxrss_kb": 1024,
+             "exit_code": 0, "timed_out": False} for w in (1.0, 1.0, 1.0)]
+    rows += [{"host": "h", "variant": "v", "param.n": 2, "wall_s": w, "maxrss_kb": 2048,
+              "exit_code": 0, "timed_out": False} for w in (1.0, 2.0, 3.0)]
+    rows.append({"host": "h", "variant": "v", "param.n": 2, "wall_s": 99, "maxrss_kb": 0,
+                 "exit_code": 1, "timed_out": False})
+    a, b = report.summarize(rows)
+    assert a["median_s"] == 1.0 and a["cv"] == 0 and a["failed"] == 0
+    assert b["median_s"] == 2.0 and b["failed"] == 1  # the failed 99s run is left out
+    assert b["cv"] == 0.5
+    t = report.table([a, b])
+    assert "n=2" in t and "noisy" in t and "1 failed (exit 1)" in t
