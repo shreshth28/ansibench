@@ -29,12 +29,15 @@ def new_results_dir(root, name):
     return d
 
 
-def run(job, inventory_path, hosts, source=None, results_root="results", verbose=False):
+def run(job, inventory_path, hosts, source=None, results_root="results", verbose=False, save=None):
     """job: dict that gets shipped as job.json (see runner.py)
     source: {"repo": url, "ref": ref} or {"path": dir} or None
+    save: {filename: text} to drop into the results dir (e.g. the spec)
     returns the local results dir"""
     source = source or {}
     results = new_results_dir(results_root, job["name"])
+    for fname, text in (save or {}).items():
+        (results / fname).write_text(text)
 
     with tempfile.TemporaryDirectory(prefix="ansibench-") as tmp:
         job_file = Path(tmp) / "job.json"

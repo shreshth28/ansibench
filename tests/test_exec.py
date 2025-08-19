@@ -38,7 +38,7 @@ def latest(tmp_path):
 
 def test_exec_clones_head_and_builds(target, repo, tmp_path, capsys):
     rc = main(["exec", "target", "-i", str(target), "--repo", repo["url"],
-               "--build", "make hi", "--results", str(tmp_path)])
+               "--build", "make hi", "--results", str(tmp_path), "--", "cat out.txt"])
     assert rc == 0
     info = build_info(latest(tmp_path))
     assert info["git_sha"] == repo["head"]
@@ -48,7 +48,7 @@ def test_exec_clones_head_and_builds(target, repo, tmp_path, capsys):
 
 def test_exec_clones_at_ref(target, repo, tmp_path):
     rc = main(["exec", "target", "-i", str(target), "--repo", repo["url"], "--ref", "v1",
-               "--results", str(tmp_path)])
+               "--results", str(tmp_path), "--", "true"])
     assert rc == 0
     assert build_info(latest(tmp_path))["git_sha"] == repo["v1"]
 
@@ -59,14 +59,14 @@ def test_exec_copies_local_path(target, tmp_path):
     (src / "build.sh").write_text("echo local-build-ran\n")
     out = tmp_path / "res"
     assert main(["exec", "target", "-i", str(target), "--path", str(src),
-                 "--build", "bash build.sh", "--results", str(out)]) == 0
+                 "--build", "bash build.sh", "--results", str(out), "--", "true"]) == 0
     d = latest(out)
     assert build_info(d)["git_sha"] is None
     assert "local-build-ran" in (d / "target" / "build0.log").read_text()
 
 
 def test_exec_build_failure(target, tmp_path, capsys):
-    rc = main(["exec", "target", "-i", str(target), "--build", "exit 3", "--results", str(tmp_path)])
+    rc = main(["exec", "target", "-i", str(target), "--build", "exit 3", "--results", str(tmp_path), "--", "true"])
     assert rc == 2
     assert "ansible-playbook failed" in capsys.readouterr().err
     # results still come back so you can look at the log
