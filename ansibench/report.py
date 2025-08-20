@@ -17,6 +17,11 @@ def load_rows(results_dir):
                 row[f"param.{k}"] = v
             for k, v in (r.get("metrics") or {}).items():
                 row[f"metric.{k}"] = v
+            for k, v in (r.get("perf") or {}).items():
+                row[f"perf.{k}"] = v
+            perf = r.get("perf") or {}
+            if perf.get("cycles") and perf.get("instructions") is not None:
+                row["perf.ipc"] = round(perf["instructions"] / perf["cycles"], 3)
             rows.append(row)
     return rows
 
@@ -29,7 +34,7 @@ def _keys(rows, prefix):
 
 
 def columns(rows):
-    return BASE_COLS[:2] + _keys(rows, "param.") + BASE_COLS[2:] + _keys(rows, "metric.")
+    return BASE_COLS[:2] + _keys(rows, "param.") + BASE_COLS[2:] + _keys(rows, "metric.") + _keys(rows, "perf.")
 
 
 def write_csv(results_dir, rows=None):
@@ -76,6 +81,9 @@ def summarize(rows):
         for k in _keys(runs, "metric."):
             vals = [r[k] for r in ok if r.get(k) is not None]
             s["metrics"][k[len("metric."):]] = statistics.median(vals) if vals else None
+        ipcs = [r["perf.ipc"] for r in ok if r.get("perf.ipc") is not None]
+        if ipcs:
+            s["metrics"]["ipc"] = statistics.median(ipcs)
         out.append(s)
     return out
 
@@ -135,5 +143,10 @@ def write_summary(results_dir, rows=None):
     if noisy:
         text += (f"\n\nheads up: {len(noisy)} row(s) have >{NOISY_CV:.0%} variation between runs, "
                  "numbers might not mean much. more --repeat, or pin the machine down.")
+    notes = []
+    for f in sorted(Path(results_dir).glob("*/notes.json")):
+        notes += [f"{f.parent.name}: {n}" for n in json.loads(f.read_text())]
+    if notes:
+        text += "\n\nnotes:\n" + "\n".join(f"- {n}" for n in notes)
     (Path(results_dir) / "summary.md").write_text(f"# {Path(results_dir).name}\n\n{text}\n")
     return text

@@ -138,3 +138,10 @@ def test_exec_prints_summary(target, tmp_path, capsys):
     assert "| host | variant | n | median" in out
     assert "| target | default | 3 |" in out
     assert (latest(tmp_path) / "summary.md").exists()
+
+
+def test_exec_perf_missing_is_a_note_not_a_failure(target, tmp_path, capsys):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "--perf", "cycles", "--", "true"]) == 0
+    out = capsys.readouterr().out
+    assert "perf_stat skipped" in out

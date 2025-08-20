@@ -69,3 +69,36 @@ def test_metrics_in_csv_and_summary(tmp_path):
     assert (tmp_path / "runs.csv").read_text().splitlines()[0].endswith("timed_out,metric.gflops")
     text = report.write_summary(tmp_path)
     assert "| gflops |" in text and "| 20 |" in text
+
+
+PERF_OUT = """# started on Mon Aug 18 21:40:02 2025
+
+1203944512,,cycles:u,401102233,100.00,,
+2391022871,,instructions:u,401102233,100.00,1.99,insn per cycle
+<not supported>,,cache-misses:u,0,100.00,,
+"""
+
+
+def test_parse_perf(tmp_path):
+    f = tmp_path / "p"
+    f.write_text(PERF_OUT)
+    v = runner.parse_perf(f, ["cycles", "instructions", "cache-misses", "branch-misses"])
+    assert v == {"cycles": 1203944512.0, "instructions": 2391022871.0,
+                 "cache-misses": None, "branch-misses": None}
+
+
+def test_perf_wrap_quotes():
+    w = runner.perf_wrap("echo 'a b' | wc", ["cycles", "instructions"], "/tmp/x y")
+    assert w.startswith("perf stat -x, -o '/tmp/x y' -e cycles,instructions -- bash -c ")
+
+
+def test_ipc_column(tmp_path):
+    from ansibench import report
+    d = tmp_path / "h"
+    d.mkdir()
+    rec = {"variant": "v", "params": {}, "rep": 0, "wall_s": 1, "user_s": 1, "sys_s": 0, "maxrss_kb": 1,
+           "exit_code": 0, "timed_out": False, "metrics": {}, "perf": {"cycles": 100.0, "instructions": 250.0}}
+    (d / "results.json").write_text(json.dumps([rec]))
+    (row,) = report.load_rows(tmp_path)
+    assert row["perf.ipc"] == 2.5
+    assert "| ipc |" in report.write_summary(tmp_path)

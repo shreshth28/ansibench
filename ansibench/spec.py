@@ -20,6 +20,7 @@ or, to compare a few versions of the same thing over some inputs:
       n: [512, 1024, 2048]
     metrics:
       gflops: 'gflops=([0-9.]+)'
+    perf_stat: [cycles, instructions, cache-misses]
 """
 import itertools
 import re
@@ -33,7 +34,7 @@ class SpecError(Exception):
 
 
 TOP_KEYS = {"name", "hosts", "source", "build", "run", "variants", "matrix", "metrics",
-            "repeat", "warmup", "timeout"}
+            "perf_stat", "repeat", "warmup", "timeout"}
 PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
@@ -107,6 +108,8 @@ def parse(data, base_dir="."):
             raise SpecError(f"metrics.{k}: bad regex: {e}")
         _check(c.groups >= 1, f"metrics.{k}: regex needs a (group) around the number")
 
+    perf = _as_list(data.get("perf_stat"), "perf_stat")
+
     for k in ("repeat", "warmup"):
         if k in data:
             _check(isinstance(data[k], int) and data[k] >= (1 if k == "repeat" else 0), f"{k} should be a whole number")
@@ -121,6 +124,7 @@ def parse(data, base_dir="."):
         "variants": variants,
         "matrix": matrix,
         "metrics": metrics,
+        "perf_stat": perf,
         "repeat": data.get("repeat", 1),
         "warmup": data.get("warmup", 0),
         "timeout": data.get("timeout"),
@@ -165,6 +169,7 @@ def to_job(spec):
         "builds": builds,
         "runs": runs,
         "metrics": spec["metrics"],
+        "perf_stat": spec.get("perf_stat", []),
         "repeat": spec["repeat"],
         "warmup": spec["warmup"],
         "timeout": spec["timeout"],
@@ -192,6 +197,8 @@ def dump(spec):
         out["matrix"] = spec["matrix"]
     if spec.get("metrics"):
         out["metrics"] = spec["metrics"]
+    if spec.get("perf_stat"):
+        out["perf_stat"] = spec["perf_stat"]
     for k, default in (("repeat", 1), ("warmup", 0), ("timeout", None)):
         if spec.get(k) != default:
             out[k] = spec[k]

@@ -43,6 +43,7 @@ def spec_from_exec_args(args):
         "variants": {"default": {"run": cmd, "build": []}},
         "matrix": {},
         "metrics": {},
+        "perf_stat": args.perf or [],
         "repeat": args.repeat,
         "warmup": args.warmup,
         "timeout": args.timeout,
@@ -111,6 +112,7 @@ def build_parser():
     ep.add_argument("-n", "--repeat", type=int, default=1, help="measured runs (default 1)")
     ep.add_argument("-w", "--warmup", type=int, default=0, help="unmeasured runs first (default 0)")
     ep.add_argument("-t", "--timeout", type=float, help="kill a run after this many seconds")
+    ep.add_argument("--perf", action="append", metavar="EVENT", help="perf stat event, can repeat")
     ep.add_argument("--name", help="name for the results dir")
     ep.add_argument("--save-spec", metavar="FILE", help="also write this as a spec file")
     add_common(ep)

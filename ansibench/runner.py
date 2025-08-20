@@ -7,6 +7,8 @@ Stdlib only, keep it that way.
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -102,6 +104,44 @@ def grab_metrics(stdout_path, metrics):
     return out
 
 
+def perf_wrap(cmd, events, out_file):
+    # perf's own overhead ends up in wall/user/sys too, it's small but it's there
+    return f"perf stat -x, -o {shlex.quote(out_file)} -e {shlex.quote(','.join(events))} -- bash -c {shlex.quote(cmd)}"
+
+
+def parse_perf(path, events):
+    """perf stat -x, output: value,unit,event,... one per line, # lines are comments"""
+    vals = {e: None for e in events}
+    try:
+        lines = open(path).read().splitlines()
+    except FileNotFoundError:
+        return vals
+    for line in lines:
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split(",")
+        if len(parts) < 3:
+            continue
+        value, event = parts[0], parts[2]
+        name = next((e for e in events if event == e or event.startswith(e + ":")), None)
+        if name is None:
+            continue
+        try:
+            vals[name] = float(value)
+        except ValueError:
+            vals[name] = None  # <not counted> / <not supported>
+    return vals
+
+
+def note(out, msg):
+    path = os.path.join(out, "notes.json")
+    notes = json.load(open(path)) if os.path.exists(path) else []
+    if msg not in notes:
+        notes.append(msg)
+    with open(path, "w") as f:
+        json.dump(notes, f, indent=2)
+
+
 def cmd_bench(job, workdir):
     src = os.path.join(workdir, "src")
     out = os.path.join(workdir, "out")
@@ -111,6 +151,10 @@ def cmd_bench(job, workdir):
     repeat = job.get("repeat", 1)
     warmup = job.get("warmup", 0)
     timeout = job.get("timeout")
+    perf_events = job.get("perf_stat") or []
+    if perf_events and not shutil.which("perf"):
+        note(out, "perf_stat skipped: perf isn't installed on this host")
+        perf_events = []
 
     records = []
     for i, r in enumerate(job.get("runs", [])):
@@ -124,8 +168,14 @@ def cmd_bench(job, workdir):
             stderr = os.path.join(raw, f"{tag}.rep{rep}.stderr")
             rec = {"variant": r.get("variant", "default"), "params": r.get("params", {}),
                    "rep": rep, "cmd": r["cmd"]}
-            rec.update(timed(r["cmd"], src, stdout, stderr, timeout))
+            cmd = r["cmd"]
+            perf_out = os.path.join(raw, f"{tag}.rep{rep}.perf")
+            if perf_events:
+                cmd = perf_wrap(cmd, perf_events, perf_out)
+            rec.update(timed(cmd, src, stdout, stderr, timeout))
             rec["metrics"] = grab_metrics(stdout, job.get("metrics"))
+            if perf_events:
+                rec["perf"] = parse_perf(perf_out, perf_events)
             rec["stdout"] = os.path.relpath(stdout, out)
             rec["stderr"] = os.path.relpath(stderr, out)
             records.append(rec)
