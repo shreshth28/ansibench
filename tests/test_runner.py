@@ -47,3 +47,25 @@ def test_summary_stats_and_noise():
     assert b["cv"] == 0.5
     t = report.table([a, b])
     assert "n=2" in t and "noisy" in t and "1 failed (exit 1)" in t
+
+
+def test_grab_metrics(tmp_path):
+    f = tmp_path / "out"
+    f.write_text("warming up gflops=1.0\nn=1024 gflops=812.5 time_ms=2.6\n")
+    m = runner.grab_metrics(f, {"gflops": r"gflops=([0-9.]+)", "t": r"time_ms=([0-9.]+)",
+                                "missing": r"nope=(\d+)", "pair": r"(n)=(\d+)"})
+    assert m == {"gflops": 812.5, "t": 2.6, "missing": None, "pair": None}
+
+
+def test_metrics_in_csv_and_summary(tmp_path):
+    from ansibench import report
+    d = tmp_path / "h1"
+    d.mkdir()
+    recs = [{"variant": "v", "params": {}, "rep": i, "wall_s": 1.0, "user_s": 1, "sys_s": 0,
+             "maxrss_kb": 10, "exit_code": 0, "timed_out": False, "metrics": {"gflops": g}}
+            for i, g in enumerate([10.0, 30.0, 20.0])]
+    (d / "results.json").write_text(json.dumps(recs))
+    report.write_csv(tmp_path)
+    assert (tmp_path / "runs.csv").read_text().splitlines()[0].endswith("timed_out,metric.gflops")
+    text = report.write_summary(tmp_path)
+    assert "| gflops |" in text and "| 20 |" in text

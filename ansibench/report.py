@@ -12,16 +12,24 @@ def load_rows(results_dir):
     for res in sorted(Path(results_dir).glob("*/results.json")):
         host = res.parent.name
         for r in json.loads(res.read_text()):
-            row = {"host": host, **{k: v for k, v in r.items() if k != "params"}}
+            row = {"host": host, **{k: v for k, v in r.items() if k not in ("params", "metrics")}}
             for k, v in r.get("params", {}).items():
                 row[f"param.{k}"] = v
+            for k, v in (r.get("metrics") or {}).items():
+                row[f"metric.{k}"] = v
             rows.append(row)
     return rows
 
 
+def _keys(rows, prefix):
+    seen = []
+    for r in rows:
+        seen += [k for k in r if k.startswith(prefix) and k not in seen]
+    return seen
+
+
 def columns(rows):
-    params = sorted({k for r in rows for k in r if k.startswith("param.")})
-    return BASE_COLS[:2] + params + BASE_COLS[2:]
+    return BASE_COLS[:2] + _keys(rows, "param.") + BASE_COLS[2:] + _keys(rows, "metric.")
 
 
 def write_csv(results_dir, rows=None):
@@ -64,6 +72,10 @@ def summarize(rows):
             mean = statistics.fmean(walls)
             s["cv"] = s["stdev_s"] / mean if mean > 0 else 0.0
             s["maxrss_kb"] = max(r["maxrss_kb"] for r in ok)
+        s["metrics"] = {}
+        for k in _keys(runs, "metric."):
+            vals = [r[k] for r in ok if r.get(k) is not None]
+            s["metrics"][k[len("metric."):]] = statistics.median(vals) if vals else None
         out.append(s)
     return out
 
@@ -74,11 +86,20 @@ def _fmt_s(x):
     return f"{x * 1000:.2f}ms" if x < 1 else f"{x:.3f}s"
 
 
+def _fmt_num(x):
+    if x is None:
+        return "-"
+    return f"{x:.4g}"
+
+
 def table(summary):
     """Markdown table, reads fine in a terminal too."""
     has_params = any(s["params"] for s in summary)
+    metric_names = []
+    for s in summary:
+        metric_names += [m for m in s.get("metrics", {}) if m not in metric_names]
     head = ["host", "variant"] + (["params"] if has_params else []) + \
-        ["n", "median", "min", "stdev", "cv", "maxrss", ""]
+        ["n", "median", "min", "stdev", "cv", "maxrss"] + metric_names + [""]
     lines = ["| " + " | ".join(head) + " |", "|" + "|".join("---" for _ in head) + "|"]
     for s in summary:
         note = []
@@ -99,6 +120,7 @@ def table(summary):
             _fmt_s(s.get("stdev_s")),
             f"{s['cv'] * 100:.1f}%" if "cv" in s else "-",
             f"{s['maxrss_kb'] / 1024:.1f}MB" if "maxrss_kb" in s else "-",
+            *(_fmt_num(s.get("metrics", {}).get(m)) for m in metric_names),
             ", ".join(note),
         ]
         lines.append("| " + " | ".join(cells) + " |")

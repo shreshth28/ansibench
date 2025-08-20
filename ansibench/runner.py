@@ -6,6 +6,7 @@ Stdlib only, keep it that way.
 """
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -80,6 +81,27 @@ def timed(cmd, cwd, stdout_path, stderr_path, timeout=None):
     }
 
 
+def grab_metrics(stdout_path, metrics):
+    """last match of each regex in stdout -> float (None if it never showed up)"""
+    if not metrics:
+        return {}
+    with open(stdout_path, errors="replace") as f:
+        text = f.read()
+    out = {}
+    for name, rx in metrics.items():
+        found = re.findall(rx, text)
+        val = None
+        if found:
+            last = found[-1]
+            last = last[0] if isinstance(last, tuple) else last
+            try:
+                val = float(last)
+            except ValueError:
+                pass
+        out[name] = val
+    return out
+
+
 def cmd_bench(job, workdir):
     src = os.path.join(workdir, "src")
     out = os.path.join(workdir, "out")
@@ -103,6 +125,7 @@ def cmd_bench(job, workdir):
             rec = {"variant": r.get("variant", "default"), "params": r.get("params", {}),
                    "rep": rep, "cmd": r["cmd"]}
             rec.update(timed(r["cmd"], src, stdout, stderr, timeout))
+            rec["metrics"] = grab_metrics(stdout, job.get("metrics"))
             rec["stdout"] = os.path.relpath(stdout, out)
             rec["stderr"] = os.path.relpath(stderr, out)
             records.append(rec)
