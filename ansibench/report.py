@@ -135,6 +135,29 @@ def table(summary):
     return "\n".join(lines)
 
 
+def machine_line(info):
+    ls = info.get("lscpu", {})
+    cpu = ls.get("Model name")
+    if not cpu or cpu == "-":
+        # arm boxes often don't have a model name, vendor + arch is better than "-"
+        cpu = " ".join(x for x in (ls.get("Vendor ID"), info.get("arch")) if x)
+    bits = [info.get("os"), cpu, f"{info.get('cpus')} cpus"]
+    if info.get("mem_total_kb"):
+        bits.append(f"{info['mem_total_kb'] / 1024 / 1024:.0f}GB")
+    gov = (info.get("cpufreq") or {}).get("governor")
+    bits.append(f"governor {gov or '-'}, turbo {info.get('turbo') or '-'}, smt {info.get('smt') or '-'}")
+    for g in info.get("gpus", []):
+        bits.append(f"{g.get('name')} (driver {g.get('driver_version')})")
+    return ", ".join(b for b in bits if b)
+
+
+def machines(results_dir):
+    lines = []
+    for f in sorted(Path(results_dir).glob("*/sysinfo.json")):
+        lines.append(f"- {f.parent.name}: {machine_line(json.loads(f.read_text()))}")
+    return "\n".join(lines)
+
+
 def write_summary(results_dir, rows=None):
     rows = load_rows(results_dir) if rows is None else rows
     summary = summarize(rows)
@@ -148,5 +171,8 @@ def write_summary(results_dir, rows=None):
         notes += [f"{f.parent.name}: {n}" for n in json.loads(f.read_text())]
     if notes:
         text += "\n\nnotes:\n" + "\n".join(f"- {n}" for n in notes)
+    m = machines(results_dir)
+    if m:
+        text = f"{m}\n\n{text}"
     (Path(results_dir) / "summary.md").write_text(f"# {Path(results_dir).name}\n\n{text}\n")
     return text

@@ -44,6 +44,12 @@
         - { src: "{{ ab_runner }}", dest: runner.py }
         - { src: "{{ ab_job }}", dest: job.json }
 
+    - name: sysinfo
+      ansible.builtin.command: python3 runner.py sysinfo job.json
+      args:
+        chdir: "{{ workdir }}"
+      changed_when: false
+
     - name: build
       ansible.builtin.command: python3 runner.py build job.json
       args:

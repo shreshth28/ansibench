@@ -1,6 +1,7 @@
 """Gets copied to the target and run there with the system python3.
 Stdlib only, keep it that way.
 
+    python3 runner.py sysinfo job.json
     python3 runner.py build job.json
     python3 runner.py bench job.json
 """
@@ -185,6 +186,111 @@ def cmd_bench(job, workdir):
     return 0
 
 
+def read(path):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def first_line(cmd):
+    if not shutil.which(cmd[0]):
+        return None
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = (p.stdout or p.stderr).strip().splitlines()
+    return out[0] if out else None
+
+
+def lscpu():
+    if not shutil.which("lscpu"):
+        return {}
+    p = subprocess.run(["lscpu"], capture_output=True, text=True, env=dict(os.environ, LC_ALL="C"))
+    info = {}
+    for line in p.stdout.splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            info[k.strip()] = v.strip()
+    return info
+
+
+def os_release():
+    for line in (read("/etc/os-release") or "").splitlines():
+        if line.startswith("PRETTY_NAME="):
+            return line.split("=", 1)[1].strip('"')
+    return None
+
+
+def turbo_state():
+    no_turbo = read("/sys/devices/system/cpu/intel_pstate/no_turbo")
+    if no_turbo is not None:
+        return "off" if no_turbo == "1" else "on"
+    boost = read("/sys/devices/system/cpu/cpufreq/boost")
+    if boost is not None:
+        return "on" if boost == "1" else "off"
+    return None
+
+
+def meminfo_kb(key):
+    for line in (read("/proc/meminfo") or "").splitlines():
+        if line.startswith(key + ":"):
+            return int(line.split()[1])
+    return None
+
+
+def gpus():
+    if not shutil.which("nvidia-smi"):
+        return []
+    fields = "name,driver_version,persistence_mode,clocks.sm,clocks.max.sm,power.limit"
+    p = subprocess.run(["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return []
+    return [dict(zip(fields.split(","), (x.strip() for x in line.split(","))))
+            for line in p.stdout.strip().splitlines()]
+
+
+def cmd_sysinfo(job, workdir):
+    out = os.path.join(workdir, "out")
+    os.makedirs(out, exist_ok=True)
+    cpu = "/sys/devices/system/cpu"
+    info = {
+        "hostname": os.uname().nodename,
+        "kernel": " ".join(os.uname()),
+        "os": os_release(),
+        "arch": os.uname().machine,
+        "cpus": os.cpu_count(),
+        "mem_total_kb": meminfo_kb("MemTotal"),
+        "hugepages": read("/proc/sys/vm/nr_hugepages"),
+        "cmdline": read("/proc/cmdline"),
+        "cpufreq": {
+            "driver": read(f"{cpu}/cpu0/cpufreq/scaling_driver"),
+            "governor": read(f"{cpu}/cpu0/cpufreq/scaling_governor"),
+            "min_khz": read(f"{cpu}/cpu0/cpufreq/scaling_min_freq"),
+            "max_khz": read(f"{cpu}/cpu0/cpufreq/scaling_max_freq"),
+        },
+        "turbo": turbo_state(),
+        "smt": read(f"{cpu}/smt/control"),
+        "lscpu": lscpu(),
+        "tools": {
+            name: first_line(cmd) for name, cmd in {
+                "gcc": ["gcc", "--version"],
+                "clang": ["clang", "--version"],
+                "nvcc": ["nvcc", "--version"],
+                "python3": ["python3", "--version"],
+                "perf": ["perf", "--version"],
+            }.items()
+        },
+        "gpus": gpus(),
+    }
+    with open(os.path.join(out, "sysinfo.json"), "w") as f:
+        json.dump(info, f, indent=2)
+    return 0
+
+
 def main(argv):
     if len(argv) != 3:
         print(__doc__, file=sys.stderr)
@@ -193,6 +299,8 @@ def main(argv):
     with open(job_path) as f:
         job = json.load(f)
     workdir = os.path.dirname(os.path.abspath(job_path))
+    if action == "sysinfo":
+        return cmd_sysinfo(job, workdir)
     if action == "build":
         return cmd_build(job, workdir)
     if action == "bench":

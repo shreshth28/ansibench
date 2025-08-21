@@ -145,3 +145,14 @@ def test_exec_perf_missing_is_a_note_not_a_failure(target, tmp_path, capsys):
                  "--perf", "cycles", "--", "true"]) == 0
     out = capsys.readouterr().out
     assert "perf_stat skipped" in out
+
+
+def test_exec_sysinfo(target, tmp_path, capsys):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path), "--", "true"]) == 0
+    info = json.loads((latest(tmp_path) / "target" / "sysinfo.json").read_text())
+    assert info["os"].startswith("Ubuntu")
+    assert info["cpus"] >= 1 and info["mem_total_kb"] > 0
+    assert info["tools"]["gcc"].startswith("gcc")
+    assert info["tools"]["nvcc"] is None and info["gpus"] == []
+    assert "lscpu" in info and info["lscpu"].get("Architecture")
+    assert "- target: Ubuntu" in capsys.readouterr().out
