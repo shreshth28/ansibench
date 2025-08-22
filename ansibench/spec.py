@@ -21,6 +21,14 @@ or, to compare a few versions of the same thing over some inputs:
     metrics:
       gflops: 'gflops=([0-9.]+)'
     perf_stat: [cycles, instructions, cache-misses]
+
+    machine:                 # everything here gets put back after the run
+      cpu_governor: performance
+      turbo: off
+      smt: off
+      pin_cores: [2, 3]
+      drop_caches: true
+      hugepages: 512
 """
 import itertools
 import re
@@ -34,7 +42,8 @@ class SpecError(Exception):
 
 
 TOP_KEYS = {"name", "hosts", "source", "build", "run", "variants", "matrix", "metrics",
-            "perf_stat", "repeat", "warmup", "timeout"}
+            "perf_stat", "machine", "repeat", "warmup", "timeout"}
+MACHINE_KEYS = {"cpu_governor", "turbo", "smt", "pin_cores", "drop_caches", "hugepages"}
 PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
@@ -110,6 +119,25 @@ def parse(data, base_dir="."):
 
     perf = _as_list(data.get("perf_stat"), "perf_stat")
 
+    machine = data.get("machine") or {}
+    _check(isinstance(machine, dict), "machine should be a mapping")
+    unknown = set(machine) - MACHINE_KEYS
+    _check(not unknown, f"machine: unknown keys: {', '.join(sorted(unknown))}")
+    if "cpu_governor" in machine:
+        _check(isinstance(machine["cpu_governor"], str), "machine.cpu_governor should be a string like performance")
+    for k in ("turbo", "smt"):
+        if k in machine:
+            _check(machine[k] in (True, False, "on", "off"), f"machine.{k} should be on/off")
+    if "drop_caches" in machine:
+        _check(isinstance(machine["drop_caches"], bool), "machine.drop_caches should be true/false")
+    if "hugepages" in machine:
+        _check(isinstance(machine["hugepages"], int) and machine["hugepages"] >= 0, "machine.hugepages should be a count")
+    if "pin_cores" in machine:
+        pc = machine["pin_cores"]
+        ok = (isinstance(pc, list) and pc and all(isinstance(c, int) and c >= 0 for c in pc)) or \
+            (isinstance(pc, str) and re.fullmatch(r"\d+(,\d+)*", pc))
+        _check(ok, "machine.pin_cores should be a list of cpu numbers, or \"2,3\"")
+
     for k in ("repeat", "warmup"):
         if k in data:
             _check(isinstance(data[k], int) and data[k] >= (1 if k == "repeat" else 0), f"{k} should be a whole number")
@@ -125,6 +153,7 @@ def parse(data, base_dir="."):
         "matrix": matrix,
         "metrics": metrics,
         "perf_stat": perf,
+        "machine": machine,
         "repeat": data.get("repeat", 1),
         "warmup": data.get("warmup", 0),
         "timeout": data.get("timeout"),
@@ -170,6 +199,7 @@ def to_job(spec):
         "runs": runs,
         "metrics": spec["metrics"],
         "perf_stat": spec.get("perf_stat", []),
+        "machine": spec.get("machine", {}),
         "repeat": spec["repeat"],
         "warmup": spec["warmup"],
         "timeout": spec["timeout"],
@@ -199,6 +229,8 @@ def dump(spec):
         out["metrics"] = spec["metrics"]
     if spec.get("perf_stat"):
         out["perf_stat"] = spec["perf_stat"]
+    if spec.get("machine"):
+        out["machine"] = spec["machine"]
     for k, default in (("repeat", 1), ("warmup", 0), ("timeout", None)):
         if spec.get(k) != default:
             out[k] = spec[k]

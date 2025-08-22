@@ -29,10 +29,12 @@ def new_results_dir(root, name):
     return d
 
 
-def run(job, inventory_path, hosts, source=None, results_root="results", verbose=False, save=None):
+def run(job, inventory_path, hosts, source=None, results_root="results", verbose=False, save=None,
+        ask_become_pass=False, target_env=None):
     """job: dict that gets shipped as job.json (see runner.py)
     source: {"repo": url, "ref": ref} or {"path": dir} or None
     save: {filename: text} to drop into the results dir (e.g. the spec)
+    target_env: extra env vars on the target (the tests use it to fake /sys)
     returns the local results dir"""
     source = source or {}
     results = new_results_dir(results_root, job["name"])
@@ -53,6 +55,9 @@ def run(job, inventory_path, hosts, source=None, results_root="results", verbose
             "ab_runner": str(HERE / "runner.py"),
             "ab_job": str(job_file),
             "ab_results": str(results.resolve()),
+            # only need root if there's something to change at the machine level
+            "ab_env": target_env or {},
+            "ab_tune": any(k in (job.get("machine") or {}) for k in ("cpu_governor", "turbo", "smt", "hugepages")),
         }
         vars_file = Path(tmp) / "vars.json"
         vars_file.write_text(json.dumps(extra))
@@ -64,8 +69,10 @@ def run(job, inventory_path, hosts, source=None, results_root="results", verbose
 
         env = dict(os.environ, ANSIBLE_RETRY_FILES_ENABLED="False", ANSIBLE_NOCOLOR="1")
         proc = subprocess.run(
-            [playbook_bin, "-i", str(inventory_path), str(HERE / "playbook.yml"), "-e", f"@{vars_file}"],
-            stdin=subprocess.DEVNULL,
+            [playbook_bin, "-i", str(inventory_path), str(HERE / "playbook.yml"), "-e", f"@{vars_file}"]
+            + (["--ask-become-pass"] if ask_become_pass else []),
+            # -K needs the terminal for the password prompt
+            stdin=None if ask_become_pass else subprocess.DEVNULL,
             stdout=None if verbose else subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

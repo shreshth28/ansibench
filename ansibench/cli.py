@@ -24,6 +24,21 @@ def command_from_args(words):
     return words[0] if len(words) == 1 else shlex.join(words)
 
 
+def machine_from_args(args):
+    m = {}
+    if args.governor:
+        m["cpu_governor"] = args.governor
+    if args.no_turbo:
+        m["turbo"] = "off"
+    if args.no_smt:
+        m["smt"] = "off"
+    if args.pin:
+        m["pin_cores"] = args.pin
+    if args.drop_caches:
+        m["drop_caches"] = True
+    return m
+
+
 def spec_from_exec_args(args):
     if args.repo and args.path:
         raise specmod.SpecError("--repo and --path don't go together")
@@ -44,6 +59,7 @@ def spec_from_exec_args(args):
         "matrix": {},
         "metrics": {},
         "perf_stat": args.perf or [],
+        "machine": machine_from_args(args),
         "repeat": args.repeat,
         "warmup": args.warmup,
         "timeout": args.timeout,
@@ -56,7 +72,7 @@ def bench(spec, inventory_path, pattern, args):
     results = engine.run(
         job, inventory_path, ",".join(h.name for h in hosts),
         source=spec["source"], results_root=args.results, verbose=args.verbose,
-        save={"spec.yml": specmod.dump(spec)},
+        save={"spec.yml": specmod.dump(spec)}, ask_become_pass=args.ask_become_pass,
     )
     for h in hosts:
         info = json.loads((results / h.name / "build.json").read_text())
@@ -90,6 +106,7 @@ def add_common(p):
     p.add_argument("-i", "--inventory", default="inventory.ini")
     p.add_argument("--results", default="results", help="where results go (default: ./results)")
     p.add_argument("-v", "--verbose", action="store_true", help="show ansible output")
+    p.add_argument("-K", "--ask-become-pass", action="store_true", help="ask for the sudo password (machine tuning needs root)")
 
 
 def build_parser():
@@ -113,6 +130,11 @@ def build_parser():
     ep.add_argument("-w", "--warmup", type=int, default=0, help="unmeasured runs first (default 0)")
     ep.add_argument("-t", "--timeout", type=float, help="kill a run after this many seconds")
     ep.add_argument("--perf", action="append", metavar="EVENT", help="perf stat event, can repeat")
+    ep.add_argument("--governor", help="cpu governor during the run, e.g. performance")
+    ep.add_argument("--no-turbo", action="store_true", help="turn turbo/boost off during the run")
+    ep.add_argument("--no-smt", action="store_true", help="turn smt/hyperthreading off during the run")
+    ep.add_argument("--pin", metavar="CPUS", help="pin to these cpus, e.g. 2,3")
+    ep.add_argument("--drop-caches", action="store_true", help="drop page cache before each run")
     ep.add_argument("--name", help="name for the results dir")
     ep.add_argument("--save-spec", metavar="FILE", help="also write this as a spec file")
     add_common(ep)

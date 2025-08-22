@@ -1,6 +1,7 @@
 # driven by ansibench/engine.py, all ab_* vars come from there
 - hosts: "{{ ab_hosts }}"
   gather_facts: false
+  environment: "{{ ab_env | default({}) }}"
   tasks:
     - name: find home
       ansible.builtin.shell: echo "$HOME"
@@ -58,12 +59,30 @@
       ignore_errors: true
       register: build
 
-    - name: bench
-      ansible.builtin.command: python3 runner.py bench job.json
-      args:
-        chdir: "{{ workdir }}"
-      changed_when: true
-      when: build.rc == 0
+    - when: build.rc == 0
+      block:
+        - name: tune the machine
+          ansible.builtin.command: python3 runner.py tune job.json
+          args:
+            chdir: "{{ workdir }}"
+          become: true
+          changed_when: true
+          when: ab_tune | bool
+
+        - name: bench
+          ansible.builtin.command: python3 runner.py bench job.json
+          args:
+            chdir: "{{ workdir }}"
+          changed_when: true
+      always:
+        # runs even if bench blew up, never leave a box with turbo off
+        - name: put the machine back
+          ansible.builtin.command: python3 runner.py restore job.json
+          args:
+            chdir: "{{ workdir }}"
+          become: true
+          changed_when: true
+          when: ab_tune | bool
 
     - name: pack results
       ansible.builtin.command: tar czf ../out.tgz .
