@@ -3,8 +3,11 @@ Stdlib only, keep it that way.
 
     python3 runner.py sysinfo job.json
     python3 runner.py build job.json
+    python3 runner.py tune job.json      (as root)
     python3 runner.py bench job.json
+    python3 runner.py restore job.json   (as root)
 """
+import glob
 import json
 import os
 import re
@@ -134,6 +137,13 @@ def parse_perf(path, events):
     return vals
 
 
+def give_back(path):
+    # tune/restore run under sudo, don't leave root-owned files for the bench step
+    uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if os.geteuid() == 0 and uid and gid:
+        os.chown(path, int(uid), int(gid))
+
+
 def note(out, msg):
     path = os.path.join(out, "notes.json")
     notes = json.load(open(path)) if os.path.exists(path) else []
@@ -141,6 +151,158 @@ def note(out, msg):
         notes.append(msg)
     with open(path, "w") as f:
         json.dump(notes, f, indent=2)
+    give_back(path)
+
+
+# --- machine tuning -------------------------------------------------------
+# ANSIBENCH_SYSROOT lets the tests point this at a fake /sys + /proc tree
+SYSROOT = os.environ.get("ANSIBENCH_SYSROOT", "/")
+
+
+def sysp(path):
+    return os.path.join(SYSROOT, path.lstrip("/"))
+
+
+def write(path, value):
+    with open(path, "w") as f:
+        f.write(str(value))
+
+
+def set_files(paths, value, state, knob, out):
+    """write value to every path, remembering what was there. all or nothing-ish:
+    if one write fails we note it and stop, restore puts back whatever got changed"""
+    for path in paths:
+        old = read(path)
+        try:
+            write(path, value)
+        except OSError as e:
+            note(out, f"{knob}: couldn't write {path} ({e.strerror}), skipped")
+            return False
+        state["files"].append([path, old])
+    return True
+
+
+def tune_governor(want, state, out):
+    paths = sorted(glob.glob(sysp("/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor")))
+    if not paths:
+        return note(out, "cpu_governor: skipped, no cpufreq on this box")
+    avail = (read(paths[0].replace("scaling_governor", "scaling_available_governors")) or "").split()
+    if avail and want not in avail:
+        return note(out, f"cpu_governor: skipped, {want} not in {' '.join(avail)}")
+    if set_files(paths, want, state, "cpu_governor", out):
+        state["applied"]["cpu_governor"] = want
+
+
+def tune_turbo(want_on, state, out):
+    no_turbo = sysp("/sys/devices/system/cpu/intel_pstate/no_turbo")
+    boost = sysp("/sys/devices/system/cpu/cpufreq/boost")
+    if os.path.exists(no_turbo):
+        path, val = no_turbo, "0" if want_on else "1"
+    elif os.path.exists(boost):
+        path, val = boost, "1" if want_on else "0"
+    else:
+        return note(out, "turbo: skipped, no intel_pstate/no_turbo or cpufreq/boost")
+    if set_files([path], val, state, "turbo", out):
+        state["applied"]["turbo"] = "on" if want_on else "off"
+
+
+def tune_smt(want_on, state, out):
+    path = sysp("/sys/devices/system/cpu/smt/control")
+    cur = read(path)
+    if cur is None:
+        return note(out, "smt: skipped, no smt/control")
+    if cur in ("notsupported", "notimplemented", "forceoff"):
+        return note(out, f"smt: skipped, smt/control says {cur}")
+    if set_files([path], "on" if want_on else "off", state, "smt", out):
+        state["applied"]["smt"] = "on" if want_on else "off"
+
+
+def tune_hugepages(n, state, out):
+    path = sysp("/proc/sys/vm/nr_hugepages")
+    if read(path) is None:
+        return note(out, "hugepages: skipped, no nr_hugepages")
+    if not set_files([path], n, state, "hugepages", out):
+        return
+    got = read(path)
+    if got != str(n):
+        note(out, f"hugepages: asked for {n}, kernel gave {got} (not enough free contiguous memory?)")
+    state["applied"]["hugepages"] = got
+
+
+def on_off(v):
+    return v in (True, "on", 1)
+
+
+def cmd_tune(job, workdir):
+    out = os.path.join(workdir, "out")
+    m = job.get("machine") or {}
+    state = {"files": [], "applied": {}}
+    # smt first so the governor gets set on the cpus that are left
+    if "smt" in m:
+        tune_smt(on_off(m["smt"]), state, out)
+    if "cpu_governor" in m:
+        tune_governor(m["cpu_governor"], state, out)
+    if "turbo" in m:
+        tune_turbo(on_off(m["turbo"]), state, out)
+    if "hugepages" in m:
+        tune_hugepages(m["hugepages"], state, out)
+    with open(os.path.join(workdir, "tune_state.json"), "w") as f:
+        json.dump(state, f, indent=2)
+    give_back(os.path.join(workdir, "tune_state.json"))
+    if state["applied"]:
+        note(out, "tuned: " + ", ".join(f"{k}={v}" for k, v in state["applied"].items()))
+    return 0
+
+
+def cmd_restore(job, workdir):
+    out = os.path.join(workdir, "out")
+    path = os.path.join(workdir, "tune_state.json")
+    if not os.path.exists(path):
+        return 0
+    state = json.load(open(path))
+    failed = []
+    for f, old in reversed(state["files"]):
+        if old is None:
+            continue
+        try:
+            write(f, old)
+        except OSError:
+            failed.append(f)
+    if failed:
+        note(out, "restore FAILED for: " + ", ".join(failed) + " -- check the box by hand")
+        return 1
+    os.remove(path)
+    return 0
+
+
+def drop_caches(out):
+    try:
+        os.sync()
+        write(sysp("/proc/sys/vm/drop_caches"), "3")
+        return
+    except OSError:
+        pass
+    # not root, try passwordless sudo
+    p = subprocess.run(["sudo", "-n", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"],
+                       capture_output=True) if shutil.which("sudo") else None
+    if not p or p.returncode != 0:
+        note(out, "drop_caches: skipped, need root or passwordless sudo")
+        return "skip"
+
+
+def pin_prefix(cores, out):
+    if not cores:
+        return ""
+    cores = [int(c) for c in (cores.split(",") if isinstance(cores, str) else cores)]
+    if not shutil.which("taskset") or not hasattr(os, "sched_getaffinity"):
+        note(out, "pin_cores: skipped, no taskset")
+        return ""
+    have = os.sched_getaffinity(0)
+    missing = [c for c in cores if c not in have]
+    if missing:
+        note(out, f"pin_cores: skipped, cpu(s) {missing} not available here")
+        return ""
+    return f"taskset -c {','.join(map(str, cores))} "
 
 
 def cmd_bench(job, workdir):
@@ -152,6 +314,9 @@ def cmd_bench(job, workdir):
     repeat = job.get("repeat", 1)
     warmup = job.get("warmup", 0)
     timeout = job.get("timeout")
+    m = job.get("machine") or {}
+    pin = pin_prefix(m.get("pin_cores"), out)
+    want_drop = bool(m.get("drop_caches"))
     perf_events = job.get("perf_stat") or []
     if perf_events and not shutil.which("perf"):
         note(out, "perf_stat skipped: perf isn't installed on this host")
@@ -170,6 +335,10 @@ def cmd_bench(job, workdir):
             rec = {"variant": r.get("variant", "default"), "params": r.get("params", {}),
                    "rep": rep, "cmd": r["cmd"]}
             cmd = r["cmd"]
+            if pin:
+                cmd = pin + "bash -c " + shlex.quote(cmd)
+            if want_drop and drop_caches(out) == "skip":
+                want_drop = False
             perf_out = os.path.join(raw, f"{tag}.rep{rep}.perf")
             if perf_events:
                 cmd = perf_wrap(cmd, perf_events, perf_out)
@@ -303,6 +472,10 @@ def main(argv):
         return cmd_sysinfo(job, workdir)
     if action == "build":
         return cmd_build(job, workdir)
+    if action == "tune":
+        return cmd_tune(job, workdir)
+    if action == "restore":
+        return cmd_restore(job, workdir)
     if action == "bench":
         return cmd_bench(job, workdir)
     print(f"unknown action {action}", file=sys.stderr)
