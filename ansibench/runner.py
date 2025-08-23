@@ -229,6 +229,48 @@ def tune_hugepages(n, state, out):
     state["applied"]["hugepages"] = got
 
 
+def nvsmi(*args):
+    return subprocess.run(["nvidia-smi", *args], capture_output=True, text=True)
+
+
+def tune_gpu(want, state, out):
+    if not shutil.which("nvidia-smi"):
+        return note(out, "gpu: skipped, no nvidia-smi")
+    q = nvsmi("--query-gpu=index,persistence_mode", "--format=csv,noheader")
+    if q.returncode != 0:
+        return note(out, f"gpu: skipped, nvidia-smi failed: {(q.stderr or q.stdout).strip()}")
+    gpus = [line.split(",")[0].strip() for line in q.stdout.strip().splitlines()]
+    persist = {line.split(",")[0].strip(): line.split(",")[1].strip() for line in q.stdout.strip().splitlines()}
+    if want.get("index") is not None:
+        idx = str(want["index"])
+        if idx not in gpus:
+            return note(out, f"gpu: skipped, no gpu {idx} (have {', '.join(gpus)})")
+        gpus = [idx]
+
+    applied = []
+    for i in gpus:
+        if "persistence_mode" in want:
+            on = on_off(want["persistence_mode"])
+            r = nvsmi("-i", i, "-pm", "1" if on else "0")
+            if r.returncode != 0:
+                note(out, f"gpu {i}: persistence mode failed: {(r.stderr or r.stdout).strip()}")
+            else:
+                was = "1" if persist.get(i) == "Enabled" else "0"
+                state["cmds"].append(["nvidia-smi", "-i", i, "-pm", was])
+                applied.append(f"gpu{i}.persistence={'on' if on else 'off'}")
+        if "lock_clocks_mhz" in want:
+            mhz = str(want["lock_clocks_mhz"])
+            r = nvsmi("-i", i, "-lgc", f"{mhz},{mhz}")
+            if r.returncode != 0:
+                note(out, f"gpu {i}: lock clocks failed (needs a datacenter/recent card + root): "
+                          f"{(r.stderr or r.stdout).strip()}")
+            else:
+                state["cmds"].append(["nvidia-smi", "-i", i, "-rgc"])
+                applied.append(f"gpu{i}.clocks={mhz}MHz")
+    if applied:
+        state["applied"]["gpu"] = " ".join(applied)
+
+
 def on_off(v):
     return v in (True, "on", 1)
 
@@ -236,7 +278,7 @@ def on_off(v):
 def cmd_tune(job, workdir):
     out = os.path.join(workdir, "out")
     m = job.get("machine") or {}
-    state = {"files": [], "applied": {}}
+    state = {"files": [], "cmds": [], "applied": {}}
     # smt first so the governor gets set on the cpus that are left
     if "smt" in m:
         tune_smt(on_off(m["smt"]), state, out)
@@ -246,6 +288,8 @@ def cmd_tune(job, workdir):
         tune_turbo(on_off(m["turbo"]), state, out)
     if "hugepages" in m:
         tune_hugepages(m["hugepages"], state, out)
+    if m.get("gpu"):
+        tune_gpu(m["gpu"], state, out)
     with open(os.path.join(workdir, "tune_state.json"), "w") as f:
         json.dump(state, f, indent=2)
     give_back(os.path.join(workdir, "tune_state.json"))
@@ -261,6 +305,9 @@ def cmd_restore(job, workdir):
         return 0
     state = json.load(open(path))
     failed = []
+    for cmd in reversed(state.get("cmds", [])):
+        if subprocess.run(cmd, capture_output=True).returncode != 0:
+            failed.append(" ".join(cmd))
     for f, old in reversed(state["files"]):
         if old is None:
             continue

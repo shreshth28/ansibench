@@ -171,3 +171,69 @@ def test_real_container_knobs_are_skipped_cleanly(target, tmp_path):
     summary = (res / "summary.md").read_text()
     assert "cpu_governor: skipped" in summary and "turbo: skipped" in summary
     assert "drop_caches: skipped" in summary
+
+
+# --- gpu, with a fake nvidia-smi -----------------------------------------------
+
+FAKE_NVSMI = """#!/bin/bash
+echo "$@" >> "$NVSMI_LOG"
+case "$1" in
+  --query-gpu=*) printf '0, Disabled\\n1, Enabled\\n' ;;
+  -i) [ "$3" = "-lgc" ] && [ -n "$NVSMI_NO_LOCK" ] && { echo "not supported" ; exit 3; } ;;
+esac
+exit 0
+"""
+
+
+@pytest.fixture
+def nvsmi(tmp_path, monkeypatch):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "nvidia-smi"
+    exe.write_text(FAKE_NVSMI)
+    exe.chmod(0o755)
+    log = tmp_path / "nvsmi.log"
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("NVSMI_LOG", str(log))
+    work = tmp_path / "work"
+    (work / "out").mkdir(parents=True)
+    return work, log
+
+
+def calls(log):
+    return [l for l in log.read_text().splitlines() if not l.startswith("--query")]
+
+
+def test_gpu_tune_and_restore(nvsmi):
+    work, log = nvsmi
+    runner.cmd_tune({"machine": {"gpu": {"persistence_mode": "on", "lock_clocks_mhz": 1500}}}, str(work))
+    assert calls(log) == ["-i 0 -pm 1", "-i 0 -lgc 1500,1500", "-i 1 -pm 1", "-i 1 -lgc 1500,1500"]
+    assert any("gpu0.persistence=on gpu0.clocks=1500MHz" in n for n in notes(work))
+    log.write_text("")
+    runner.cmd_restore({}, str(work))
+    # reverse order, and persistence goes back to what each gpu had before
+    assert calls(log) == ["-i 1 -rgc", "-i 1 -pm 1", "-i 0 -rgc", "-i 0 -pm 0"]
+
+
+def test_gpu_index_and_lock_failure(nvsmi, monkeypatch):
+    work, log = nvsmi
+    monkeypatch.setenv("NVSMI_NO_LOCK", "1")
+    runner.cmd_tune({"machine": {"gpu": {"index": 1, "lock_clocks_mhz": 900}}}, str(work))
+    assert calls(log) == ["-i 1 -lgc 900,900"]
+    assert any("lock clocks failed" in n for n in notes(work))
+    log.write_text("")
+    runner.cmd_restore({}, str(work))
+    assert calls(log) == []  # nothing was changed so nothing to undo
+
+
+def test_gpu_bad_index(nvsmi):
+    work, _ = nvsmi
+    runner.cmd_tune({"machine": {"gpu": {"index": 5, "persistence_mode": "on"}}}, str(work))
+    assert any("no gpu 5" in n for n in notes(work))
+
+
+def test_no_nvidia_smi(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    (tmp_path / "out").mkdir()
+    runner.cmd_tune({"machine": {"gpu": {"persistence_mode": "on"}}}, str(tmp_path))
+    assert "gpu: skipped, no nvidia-smi" in notes(tmp_path)

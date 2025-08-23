@@ -138,3 +138,23 @@ def test_variants_matrix_on_target(target, tmp_path, capsys):
     assert len(csv_lines) == 1 + 4
     out = capsys.readouterr().out
     assert "| target | slow | n=2 | 1 |" in out
+
+
+@pytest.mark.parametrize("machine,ok", [
+    ({"cpu_governor": "performance", "turbo": "off", "smt": False, "pin_cores": [2, 3],
+      "drop_caches": True, "hugepages": 64, "gpu": {"persistence_mode": "on", "lock_clocks_mhz": 1500}}, True),
+    ({"pin_cores": "2,3"}, True),
+    ({"pin_cores": "2-3"}, False),
+    ({"turbo": "sometimes"}, False),
+    ({"gpu": {"lock_clocks_mhz": "fast"}}, False),
+    ({"gpu": {"overclock": 1}}, False),
+    ({"fans": "max"}, False),
+])
+def test_machine_validation(machine, ok):
+    data = {"name": "x", "run": "a", "machine": machine}
+    if ok:
+        s = spec.parse(data)
+        assert spec.parse(yaml.safe_load(spec.dump(s))) == s
+    else:
+        with pytest.raises(spec.SpecError):
+            spec.parse(data)

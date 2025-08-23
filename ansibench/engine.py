@@ -57,7 +57,7 @@ def run(job, inventory_path, hosts, source=None, results_root="results", verbose
             "ab_results": str(results.resolve()),
             # only need root if there's something to change at the machine level
             "ab_env": target_env or {},
-            "ab_tune": any(k in (job.get("machine") or {}) for k in ("cpu_governor", "turbo", "smt", "hugepages")),
+            "ab_tune": any(k in (job.get("machine") or {}) for k in ("cpu_governor", "turbo", "smt", "hugepages", "gpu")),
         }
         vars_file = Path(tmp) / "vars.json"
         vars_file.write_text(json.dumps(extra))

@@ -29,6 +29,9 @@ or, to compare a few versions of the same thing over some inputs:
       pin_cores: [2, 3]
       drop_caches: true
       hugepages: 512
+      gpu:
+        persistence_mode: on
+        lock_clocks_mhz: 1500
 """
 import itertools
 import re
@@ -43,7 +46,8 @@ class SpecError(Exception):
 
 TOP_KEYS = {"name", "hosts", "source", "build", "run", "variants", "matrix", "metrics",
             "perf_stat", "machine", "repeat", "warmup", "timeout"}
-MACHINE_KEYS = {"cpu_governor", "turbo", "smt", "pin_cores", "drop_caches", "hugepages"}
+MACHINE_KEYS = {"cpu_governor", "turbo", "smt", "pin_cores", "drop_caches", "hugepages", "gpu"}
+GPU_KEYS = {"index", "persistence_mode", "lock_clocks_mhz"}
 PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
 
@@ -132,6 +136,15 @@ def parse(data, base_dir="."):
         _check(isinstance(machine["drop_caches"], bool), "machine.drop_caches should be true/false")
     if "hugepages" in machine:
         _check(isinstance(machine["hugepages"], int) and machine["hugepages"] >= 0, "machine.hugepages should be a count")
+    if "gpu" in machine:
+        g = machine["gpu"]
+        _check(isinstance(g, dict) and set(g) <= GPU_KEYS, f"machine.gpu takes {', '.join(sorted(GPU_KEYS))}")
+        if "persistence_mode" in g:
+            _check(g["persistence_mode"] in (True, False, "on", "off"), "machine.gpu.persistence_mode should be on/off")
+        if "lock_clocks_mhz" in g:
+            _check(isinstance(g["lock_clocks_mhz"], int) and g["lock_clocks_mhz"] > 0, "machine.gpu.lock_clocks_mhz should be MHz")
+        if "index" in g:
+            _check(isinstance(g["index"], int) and g["index"] >= 0, "machine.gpu.index should be a gpu number")
     if "pin_cores" in machine:
         pc = machine["pin_cores"]
         ok = (isinstance(pc, list) and pc and all(isinstance(c, int) and c >= 0 for c in pc)) or \
