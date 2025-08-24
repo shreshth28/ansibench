@@ -14,8 +14,8 @@
 or, to compare a few versions of the same thing over some inputs:
 
     variants:
-      naive: {build: make naive, run: ./naive {{ n }}}
-      tiled: {build: make tiled, run: ./tiled {{ n }}}
+      naive: {build: make naive, run: './naive {{ n }}'}   # quote anything with {{ }}
+      tiled: {build: make tiled, run: './tiled {{ n }}'}
     matrix:
       n: [512, 1024, 2048]
     metrics:
@@ -180,7 +180,10 @@ def load(path):
     except FileNotFoundError:
         raise SpecError(f"no such spec: {path}")
     except yaml.YAMLError as e:
-        raise SpecError(f"{path}: bad yaml: {e}")
+        hint = ""
+        if "{{" in path.read_text():
+            hint = "\n(tip: put quotes around commands that use {{ }}, yaml reads { as the start of a mapping)"
+        raise SpecError(f"{path}: bad yaml: {e}{hint}")
     try:
         return parse(data, path.parent)
     except SpecError as e:

@@ -82,6 +82,13 @@ def test_bad_yaml(tmp_path):
         spec.load(f)
 
 
+def test_unquoted_braces_hint(tmp_path):
+    f = tmp_path / "b.yml"
+    f.write_text("name: x\nvariants:\n  a: {run: ./a {{ n }}}\nmatrix: {n: [1]}\n")
+    with pytest.raises(spec.SpecError, match="put quotes around"):
+        spec.load(f)
+
+
 def test_dump_roundtrip():
     s = spec.parse({"name": "x", "run": "a", "build": "make", "repeat": 3,
                     "source": {"repo": "r", "ref": "v1"}})
