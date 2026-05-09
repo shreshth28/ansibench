@@ -156,3 +156,12 @@ def test_exec_sysinfo(target, tmp_path, capsys):
     assert info["tools"]["nvcc"] is None and info["gpus"] == []
     assert "lscpu" in info and info["lscpu"].get("Architecture")
     assert "- target: Ubuntu" in capsys.readouterr().out
+
+
+def test_exec_env_puts_tool_on_path(target, tmp_path):
+    on_target("mkdir -p /tmp/fakecuda/bin && printf '#!/bin/sh\\necho fake nvcc\\n' > /tmp/fakecuda/bin/nvcc && chmod +x /tmp/fakecuda/bin/nvcc")
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path),
+                 "--env", "PATH=/tmp/fakecuda/bin:$PATH", "--build", "nvcc > b.txt", "--", "cat b.txt; nvcc"]) == 0
+    d = latest(tmp_path)
+    (r,) = results_of(d)
+    assert (d / "target" / r["stdout"]).read_text() == "fake nvcc\nfake nvcc\n"

@@ -21,6 +21,8 @@ or, to compare a few versions of the same thing over some inputs:
     metrics:
       gflops: 'gflops=([0-9.]+)'
     perf_stat: [cycles, instructions, cache-misses]
+    env:                     # $VARS expand on the target
+      PATH: /usr/local/cuda/bin:$PATH
 
     machine:                 # everything here gets put back after the run
       cpu_governor: performance
@@ -45,7 +47,7 @@ class SpecError(Exception):
 
 
 TOP_KEYS = {"name", "hosts", "source", "build", "run", "variants", "matrix", "metrics",
-            "perf_stat", "machine", "repeat", "warmup", "timeout"}
+            "perf_stat", "machine", "env", "repeat", "warmup", "timeout"}
 MACHINE_KEYS = {"cpu_governor", "turbo", "smt", "pin_cores", "drop_caches", "hugepages", "gpu"}
 GPU_KEYS = {"index", "persistence_mode", "lock_clocks_mhz"}
 PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
@@ -123,6 +125,11 @@ def parse(data, base_dir="."):
 
     perf = _as_list(data.get("perf_stat"), "perf_stat")
 
+    env = data.get("env") or {}
+    _check(isinstance(env, dict) and all(isinstance(v, (str, int, float)) for v in env.values()),
+           "env should be a mapping of NAME: value")
+    env = {str(k): str(v) for k, v in env.items()}
+
     machine = data.get("machine") or {}
     _check(isinstance(machine, dict), "machine should be a mapping")
     unknown = set(machine) - MACHINE_KEYS
@@ -167,6 +174,7 @@ def parse(data, base_dir="."):
         "metrics": metrics,
         "perf_stat": perf,
         "machine": machine,
+        "env": env,
         "repeat": data.get("repeat", 1),
         "warmup": data.get("warmup", 0),
         "timeout": data.get("timeout"),
@@ -216,6 +224,7 @@ def to_job(spec):
         "metrics": spec["metrics"],
         "perf_stat": spec.get("perf_stat", []),
         "machine": spec.get("machine", {}),
+        "env": spec.get("env", {}),
         "repeat": spec["repeat"],
         "warmup": spec["warmup"],
         "timeout": spec["timeout"],
@@ -247,6 +256,8 @@ def dump(spec):
         out["perf_stat"] = spec["perf_stat"]
     if spec.get("machine"):
         out["machine"] = spec["machine"]
+    if spec.get("env"):
+        out["env"] = spec["env"]
     for k, default in (("repeat", 1), ("warmup", 0), ("timeout", None)):
         if spec.get(k) != default:
             out[k] = spec[k]

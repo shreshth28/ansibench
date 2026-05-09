@@ -24,6 +24,16 @@ def command_from_args(words):
     return words[0] if len(words) == 1 else shlex.join(words)
 
 
+def env_from_args(args):
+    env = {}
+    for kv in args.env or []:
+        if "=" not in kv:
+            raise specmod.SpecError(f"--env wants NAME=value, got {kv}")
+        k, v = kv.split("=", 1)
+        env[k] = v
+    return env
+
+
 def machine_from_args(args):
     m = {}
     if args.governor:
@@ -60,6 +70,7 @@ def spec_from_exec_args(args):
         "metrics": {},
         "perf_stat": args.perf or [],
         "machine": machine_from_args(args),
+        "env": env_from_args(args),
         "repeat": args.repeat,
         "warmup": args.warmup,
         "timeout": args.timeout,
@@ -135,6 +146,7 @@ def build_parser():
     ep.add_argument("--no-smt", action="store_true", help="turn smt/hyperthreading off during the run")
     ep.add_argument("--pin", metavar="CPUS", help="pin to these cpus, e.g. 2,3")
     ep.add_argument("--drop-caches", action="store_true", help="drop page cache before each run")
+    ep.add_argument("--env", action="append", metavar="NAME=VALUE", help="env var for build + run, $VARS expand on the target")
     ep.add_argument("--name", help="name for the results dir")
     ep.add_argument("--save-spec", metavar="FILE", help="also write this as a spec file")
     add_common(ep)

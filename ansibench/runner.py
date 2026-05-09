@@ -20,9 +20,17 @@ import threading
 import time
 
 
-def sh(cmd, cwd, log):
+def job_env(job):
+    # $VARS in values expand against the target's env, so PATH: /usr/local/cuda/bin:$PATH works
+    env = dict(os.environ)
+    for k, v in (job.get("env") or {}).items():
+        env[k] = os.path.expandvars(str(v))
+    return env
+
+
+def sh(cmd, cwd, log, env=None):
     with open(log, "w") as f:
-        return subprocess.run(["bash", "-c", cmd], cwd=cwd, stdout=f, stderr=subprocess.STDOUT).returncode
+        return subprocess.run(["bash", "-c", cmd], cwd=cwd, stdout=f, stderr=subprocess.STDOUT, env=env).returncode
 
 
 def git_sha(src):
@@ -38,7 +46,7 @@ def cmd_build(job, workdir):
     builds = []
     for i, cmd in enumerate(job.get("builds", [])):
         log = os.path.join(out, f"build{i}.log")
-        rc = sh(cmd, src, log)
+        rc = sh(cmd, src, log, job_env(job))
         builds.append({"cmd": cmd, "exit_code": rc, "log": os.path.basename(log)})
         if rc != 0:
             break
@@ -63,11 +71,11 @@ def kill_group(p, fired):
         pass
 
 
-def timed(cmd, cwd, stdout_path, stderr_path, timeout=None):
+def timed(cmd, cwd, stdout_path, stderr_path, timeout=None, env=None):
     fired = threading.Event()
     with open(stdout_path, "wb") as out, open(stderr_path, "wb") as err:
         t0 = time.perf_counter()
-        p = subprocess.Popen(["bash", "-c", cmd], cwd=cwd, stdout=out, stderr=err, start_new_session=True)
+        p = subprocess.Popen(["bash", "-c", cmd], cwd=cwd, stdout=out, stderr=err, start_new_session=True, env=env)
         timer = threading.Timer(timeout, kill_group, (p, fired)) if timeout else None
         if timer:
             timer.start()
@@ -361,6 +369,7 @@ def cmd_bench(job, workdir):
     repeat = job.get("repeat", 1)
     warmup = job.get("warmup", 0)
     timeout = job.get("timeout")
+    env = job_env(job)
     m = job.get("machine") or {}
     pin = pin_prefix(m.get("pin_cores"), out)
     want_drop = bool(m.get("drop_caches"))
@@ -375,7 +384,7 @@ def cmd_bench(job, workdir):
         for w in range(warmup):
             # warmups aren't recorded, output kept around in case they blow up
             timed(r["cmd"], src, os.path.join(raw, f"{tag}.warmup{w}.stdout"),
-                  os.path.join(raw, f"{tag}.warmup{w}.stderr"), timeout)
+                  os.path.join(raw, f"{tag}.warmup{w}.stderr"), timeout, env)
         for rep in range(repeat):
             stdout = os.path.join(raw, f"{tag}.rep{rep}.stdout")
             stderr = os.path.join(raw, f"{tag}.rep{rep}.stderr")
@@ -389,7 +398,7 @@ def cmd_bench(job, workdir):
             perf_out = os.path.join(raw, f"{tag}.rep{rep}.perf")
             if perf_events:
                 cmd = perf_wrap(cmd, perf_events, perf_out)
-            rec.update(timed(cmd, src, stdout, stderr, timeout))
+            rec.update(timed(cmd, src, stdout, stderr, timeout, env))
             rec["metrics"] = grab_metrics(stdout, job.get("metrics"))
             if perf_events:
                 rec["perf"] = parse_perf(perf_out, perf_events)

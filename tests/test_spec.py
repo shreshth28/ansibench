@@ -165,3 +165,12 @@ def test_machine_validation(machine, ok):
     else:
         with pytest.raises(spec.SpecError):
             spec.parse(data)
+
+
+def test_env_in_spec():
+    s = spec.parse({"name": "x", "run": "a", "env": {"PATH": "/usr/local/cuda/bin:$PATH", "OMP_NUM_THREADS": 4}})
+    assert s["env"] == {"PATH": "/usr/local/cuda/bin:$PATH", "OMP_NUM_THREADS": "4"}
+    assert spec.to_job(s)["env"] == s["env"]
+    assert spec.parse(yaml.safe_load(spec.dump(s))) == s
+    with pytest.raises(spec.SpecError, match="env"):
+        spec.parse({"name": "x", "run": "a", "env": ["PATH=x"]})

@@ -102,3 +102,20 @@ def test_ipc_column(tmp_path):
     (row,) = report.load_rows(tmp_path)
     assert row["perf.ipc"] == 2.5
     assert "| ipc |" in report.write_summary(tmp_path)
+
+
+def test_env_expands_against_target_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    env = runner.job_env({"env": {"PATH": "/opt/cuda/bin:$PATH", "N": 3}})
+    assert env["PATH"] == "/opt/cuda/bin:/usr/bin:/bin"
+    assert env["N"] == "3"
+
+
+def test_env_reaches_build_and_run(tmp_path):
+    (tmp_path / "src").mkdir()
+    job = {"env": {"GREETING": "hey"}, "builds": ["echo $GREETING > built"],
+           "runs": [{"variant": "v", "cmd": "cat built; echo $GREETING"}]}
+    runner.cmd_build(job, str(tmp_path))
+    runner.cmd_bench(job, str(tmp_path))
+    (rec,) = json.loads((tmp_path / "out" / "results.json").read_text())
+    assert (tmp_path / "out" / rec["stdout"]).read_text() == "hey\nhey\n"
