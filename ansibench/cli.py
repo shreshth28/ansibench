@@ -71,6 +71,8 @@ def spec_from_exec_args(args):
         "perf_stat": args.perf or [],
         "machine": machine_from_args(args),
         "env": env_from_args(args),
+        "timing": specmod.parse_timing(
+            {"from": "output", "regex": args.time_regex, "unit": args.time_unit} if args.time_regex else None),
         "repeat": args.repeat,
         "warmup": args.warmup,
         "timeout": args.timeout,
@@ -147,6 +149,8 @@ def build_parser():
     ep.add_argument("--pin", metavar="CPUS", help="pin to these cpus, e.g. 2,3")
     ep.add_argument("--drop-caches", action="store_true", help="drop page cache before each run")
     ep.add_argument("--env", action="append", metavar="NAME=VALUE", help="env var for build + run, $VARS expand on the target")
+    ep.add_argument("--time-regex", metavar="REGEX", help="take the time from the program's output instead of wall time")
+    ep.add_argument("--time-unit", default="s", help="unit of the --time-regex number: s, ms, us, ns (default s)")
     ep.add_argument("--name", help="name for the results dir")
     ep.add_argument("--save-spec", metavar="FILE", help="also write this as a spec file")
     add_common(ep)

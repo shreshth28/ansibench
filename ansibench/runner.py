@@ -360,6 +360,17 @@ def pin_prefix(cores, out):
     return f"taskset -c {','.join(map(str, cores))} "
 
 
+UNITS = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9}
+
+
+def pick_time(rec, stdout_path, timing):
+    """seconds, either our own wall clock or whatever the program printed"""
+    if not timing or timing.get("from", "process") == "process":
+        return rec["wall_s"]
+    v = grab_metrics(stdout_path, {"t": timing["regex"]})["t"]
+    return None if v is None else v * UNITS[timing.get("unit", "s")]
+
+
 def cmd_bench(job, workdir):
     src = os.path.join(workdir, "src")
     out = os.path.join(workdir, "out")
@@ -400,6 +411,8 @@ def cmd_bench(job, workdir):
                 cmd = perf_wrap(cmd, perf_events, perf_out)
             rec.update(timed(cmd, src, stdout, stderr, timeout, env))
             rec["metrics"] = grab_metrics(stdout, job.get("metrics"))
+            rec["timing"] = (job.get("timing") or {}).get("from", "process")
+            rec["time_s"] = pick_time(rec, stdout, job.get("timing"))
             if perf_events:
                 rec["perf"] = parse_perf(perf_out, perf_events)
             rec["stdout"] = os.path.relpath(stdout, out)

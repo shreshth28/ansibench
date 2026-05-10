@@ -174,3 +174,28 @@ def test_env_in_spec():
     assert spec.parse(yaml.safe_load(spec.dump(s))) == s
     with pytest.raises(spec.SpecError, match="env"):
         spec.parse({"name": "x", "run": "a", "env": ["PATH=x"]})
+
+
+def test_timing_default_is_process():
+    s = spec.parse({"name": "x", "run": "a"})
+    assert s["timing"] == {"from": "process"}
+    assert "timing" not in yaml.safe_load(spec.dump(s))
+
+
+def test_timing_from_output():
+    t = {"from": "output", "regex": "time_ms=([0-9.]+)", "unit": "ms"}
+    s = spec.parse({"name": "x", "run": "a", "timing": t})
+    assert s["timing"] == t and spec.to_job(s)["timing"] == t
+    assert spec.parse(yaml.safe_load(spec.dump(s))) == s
+
+
+@pytest.mark.parametrize("t,err", [
+    ({"from": "output"}, "regex is needed"),
+    ({"from": "output", "regex": "t=[0-9]+"}, "needs a .group."),
+    ({"from": "output", "regex": "t=([0-9]+)", "unit": "minutes"}, "unit"),
+    ({"from": "gpu"}, "process or output"),
+    ("wall", "timing should be"),
+])
+def test_timing_validation(t, err):
+    with pytest.raises(spec.SpecError, match=err):
+        spec.parse({"name": "x", "run": "a", "timing": t})

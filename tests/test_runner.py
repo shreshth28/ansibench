@@ -119,3 +119,13 @@ def test_env_reaches_build_and_run(tmp_path):
     runner.cmd_bench(job, str(tmp_path))
     (rec,) = json.loads((tmp_path / "out" / "results.json").read_text())
     assert (tmp_path / "out" / rec["stdout"]).read_text() == "hey\nhey\n"
+
+
+def test_pick_time(tmp_path):
+    out = tmp_path / "o"
+    out.write_text("kernel=x time_ms=2.5 gbps=100\n")
+    rec = {"wall_s": 0.4}
+    assert runner.pick_time(rec, out, None) == 0.4
+    assert runner.pick_time(rec, out, {"from": "process"}) == 0.4
+    assert runner.pick_time(rec, out, {"from": "output", "regex": r"time_ms=([0-9.]+)", "unit": "ms"}) == 0.0025
+    assert runner.pick_time(rec, out, {"from": "output", "regex": r"nope=([0-9.]+)", "unit": "ms"}) is None

@@ -23,6 +23,10 @@ or, to compare a few versions of the same thing over some inputs:
     perf_stat: [cycles, instructions, cache-misses]
     env:                     # $VARS expand on the target
       PATH: /usr/local/cuda/bin:$PATH
+    timing:                  # default is the whole process's wall time
+      from: output
+      regex: 'time_ms=([0-9.]+)'
+      unit: ms
 
     machine:                 # everything here gets put back after the run
       cpu_governor: performance
@@ -47,7 +51,8 @@ class SpecError(Exception):
 
 
 TOP_KEYS = {"name", "hosts", "source", "build", "run", "variants", "matrix", "metrics",
-            "perf_stat", "machine", "env", "repeat", "warmup", "timeout"}
+            "perf_stat", "machine", "env", "timing", "repeat", "warmup", "timeout"}
+UNITS = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9}
 MACHINE_KEYS = {"cpu_governor", "turbo", "smt", "pin_cores", "drop_caches", "hugepages", "gpu"}
 GPU_KEYS = {"index", "persistence_mode", "lock_clocks_mhz"}
 PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
@@ -125,6 +130,8 @@ def parse(data, base_dir="."):
 
     perf = _as_list(data.get("perf_stat"), "perf_stat")
 
+    timing = parse_timing(data.get("timing"))
+
     env = data.get("env") or {}
     _check(isinstance(env, dict) and all(isinstance(v, (str, int, float)) for v in env.values()),
            "env should be a mapping of NAME: value")
@@ -175,10 +182,33 @@ def parse(data, base_dir="."):
         "perf_stat": perf,
         "machine": machine,
         "env": env,
+        "timing": timing,
         "repeat": data.get("repeat", 1),
         "warmup": data.get("warmup", 0),
         "timeout": data.get("timeout"),
     }
+
+
+def parse_timing(t):
+    """process = wall time of the whole thing (default).
+    output = the program times itself and prints it, we regex it out."""
+    if t is None or t == "process":
+        return {"from": "process"}
+    _check(isinstance(t, dict), "timing should be process, or {from: output, regex: ..., unit: ms}")
+    _check(set(t) <= {"from", "regex", "unit"}, "timing takes from, regex, unit")
+    src = t.get("from", "output")
+    _check(src in ("process", "output"), "timing.from should be process or output")
+    if src == "process":
+        return {"from": "process"}
+    rx = t.get("regex")
+    _check(isinstance(rx, str), "timing.regex is needed for from: output")
+    try:
+        _check(re.compile(rx).groups >= 1, "timing.regex needs a (group) around the number")
+    except re.error as e:
+        raise SpecError(f"timing.regex: bad regex: {e}")
+    unit = t.get("unit", "s")
+    _check(unit in UNITS, f"timing.unit should be one of {', '.join(UNITS)}")
+    return {"from": "output", "regex": rx, "unit": unit}
 
 
 def load(path):
@@ -225,6 +255,7 @@ def to_job(spec):
         "perf_stat": spec.get("perf_stat", []),
         "machine": spec.get("machine", {}),
         "env": spec.get("env", {}),
+        "timing": spec.get("timing", {"from": "process"}),
         "repeat": spec["repeat"],
         "warmup": spec["warmup"],
         "timeout": spec["timeout"],
@@ -258,6 +289,8 @@ def dump(spec):
         out["machine"] = spec["machine"]
     if spec.get("env"):
         out["env"] = spec["env"]
+    if spec.get("timing", {}).get("from") == "output":
+        out["timing"] = spec["timing"]
     for k, default in (("repeat", 1), ("warmup", 0), ("timeout", None)):
         if spec.get(k) != default:
             out[k] = spec[k]
