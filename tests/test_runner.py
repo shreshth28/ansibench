@@ -129,3 +129,20 @@ def test_pick_time(tmp_path):
     assert runner.pick_time(rec, out, {"from": "process"}) == 0.4
     assert runner.pick_time(rec, out, {"from": "output", "regex": r"time_ms=([0-9.]+)", "unit": "ms"}) == 0.0025
     assert runner.pick_time(rec, out, {"from": "output", "regex": r"nope=([0-9.]+)", "unit": "ms"}) is None
+
+
+def test_summary_uses_chosen_timing(tmp_path):
+    from ansibench import report
+    d = tmp_path / "h"
+    d.mkdir()
+    # wall is all over the place (context init etc), the printed time is steady
+    recs = [{"variant": "v", "params": {}, "rep": i, "wall_s": w, "time_s": 0.002, "timing": "output",
+             "user_s": 0, "sys_s": 0, "maxrss_kb": 1, "exit_code": 0, "timed_out": False, "metrics": {}}
+            for i, w in enumerate([0.3, 0.5, 0.9])]
+    (d / "results.json").write_text(json.dumps(recs))
+    (s,) = report.summarize(report.load_rows(tmp_path))
+    assert s["median_s"] == 0.002 and s["cv"] == 0
+    text = report.write_summary(tmp_path)
+    assert "timing: output" in text and "2.00ms" in text and "noisy" not in text
+    assert (tmp_path / "runs.csv").exists() or report.write_csv(tmp_path)
+    assert "time_s,wall_s" in (tmp_path / "runs.csv").read_text().splitlines()[0]

@@ -119,7 +119,7 @@ def test_exec_repeat_warmup_and_csv(target, tmp_path):
     d = latest(tmp_path)
     assert len(results_of(d)) == 4
     lines = (d / "runs.csv").read_text().splitlines()
-    assert lines[0].startswith("host,variant,rep,wall_s")
+    assert lines[0].startswith("host,variant,rep,time_s,wall_s")
     assert len(lines) == 5 and lines[1].startswith("target,default,0,")
 
 
@@ -165,3 +165,15 @@ def test_exec_env_puts_tool_on_path(target, tmp_path):
     d = latest(tmp_path)
     (r,) = results_of(d)
     assert (d / "target" / r["stdout"]).read_text() == "fake nvcc\nfake nvcc\n"
+
+
+def test_exec_time_from_output(target, tmp_path, capsys):
+    # sleeps 0.3s of "setup" but reports 5ms of "kernel"
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path), "-n", "3",
+                 "--time-regex", r"time_ms=([0-9.]+)", "--time-unit", "ms",
+                 "--", "sleep 0.3; echo time_ms=5.0"]) == 0
+    out = capsys.readouterr().out
+    assert "timing: output" in out
+    assert "| target | default | 3 | 5.00ms | 5.00ms |" in out
+    d = latest(tmp_path)
+    assert all(r["wall_s"] > 0.3 and r["time_s"] == 0.005 for r in results_of(d))

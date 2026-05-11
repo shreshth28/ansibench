@@ -141,7 +141,7 @@ def test_variants_matrix_on_target(target, tmp_path, capsys):
     assert main(["run", str(f), "-i", str(target), "--results", str(res)]) == 0
     (d,) = list(res.iterdir())
     csv_lines = (d / "runs.csv").read_text().splitlines()
-    assert csv_lines[0].startswith("host,variant,param.n,rep,wall_s")
+    assert csv_lines[0].startswith("host,variant,param.n,rep,time_s,wall_s")
     assert len(csv_lines) == 1 + 4
     out = capsys.readouterr().out
     assert "| target | slow | n=2 | 1 |" in out

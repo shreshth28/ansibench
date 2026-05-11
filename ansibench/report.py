@@ -4,7 +4,7 @@ import json
 import statistics
 from pathlib import Path
 
-BASE_COLS = ["host", "variant", "rep", "wall_s", "user_s", "sys_s", "maxrss_kb", "exit_code", "timed_out"]
+BASE_COLS = ["host", "variant", "rep", "time_s", "wall_s", "user_s", "sys_s", "maxrss_kb", "exit_code", "timed_out"]
 
 
 def load_rows(results_dir):
@@ -50,8 +50,13 @@ def write_csv(results_dir, rows=None):
 NOISY_CV = 0.05
 
 
+def run_time(r):
+    # time_s is whatever the spec's timing says, older results only have wall_s
+    return r.get("time_s", r["wall_s"])
+
+
 def summarize(rows):
-    """Group runs by host + variant + params and work out wall-time stats."""
+    """Group runs by host + variant + params and work out time stats."""
     groups = {}
     for r in rows:
         params = tuple(sorted((k, r[k]) for k in r if k.startswith("param.")))
@@ -60,7 +65,7 @@ def summarize(rows):
     out = []
     for (host, variant, params), runs in groups.items():
         ok = [r for r in runs if r["exit_code"] == 0 and not r.get("timed_out")]
-        walls = [r["wall_s"] for r in ok]
+        walls = [run_time(r) for r in ok if run_time(r) is not None]
         s = {
             "host": host,
             "variant": variant,
@@ -172,6 +177,9 @@ def write_summary(results_dir, rows=None):
     if notes:
         text += "\n\nnotes:\n" + "\n".join(f"- {n}" for n in notes)
     m = machines(results_dir)
+    modes = sorted({r.get("timing", "process") for r in rows})
+    if modes != ["process"]:
+        text = f"timing: {', '.join(modes)} (times are what the program printed, not wall)\n\n{text}"
     if m:
         text = f"{m}\n\n{text}"
     (Path(results_dir) / "summary.md").write_text(f"# {Path(results_dir).name}\n\n{text}\n")
