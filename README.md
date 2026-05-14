@@ -41,7 +41,7 @@ Here's what it prints (from the test container, trimmed to the table):
 | target | default | 10 | 655.22ms | 640.72ms | 12.52ms | 1.9% | 12.5MB |  |
 ```
 
-Timing happens on the target (wall, user/sys, peak RSS via `wait4`), so SSH isn't in the numbers. `--path DIR` copies a local dir over instead of cloning. Other flags: `-t` timeout, `--perf cycles --perf instructions`, `--pin 2,3`, `--governor performance`, `--no-turbo`, `--no-smt`, `--drop-caches`. Add `--save-spec bench.yml` to turn it into a spec file.
+Timing happens on the target (wall, user/sys, peak RSS via `wait4`), so SSH isn't in the numbers. `--env PATH=/usr/local/cuda/bin:$PATH` sets env vars for the build and the runs (`$VARS` expand on the target, handy since ssh doesn't load your bashrc). `--path DIR` copies a local dir over instead of cloning. Other flags: `-t` timeout, `--perf cycles --perf instructions`, `--pin 2,3`, `--governor performance`, `--no-turbo`, `--no-smt`, `--drop-caches`. Add `--save-spec bench.yml` to turn it into a spec file.
 
 ## Spec files: `run`
 
@@ -83,6 +83,27 @@ ansibench run sorter.yml -i inventory.ini
 
 Quote anything with `{{ }}` in it, YAML gets confused otherwise.
 
+## Timing
+
+By default the time for a run is the wall time of the whole process. That's right for things like a build or `gzip`, but useless for a GPU program, where most of the wall time is CUDA starting up and copying data. If the program times itself, tell ansibench to use that instead:
+
+```yaml
+timing:
+  from: output
+  regex: 'time_ms=([0-9.]+)'
+  unit: ms          # s, ms, us, ns
+```
+
+Medians, stdev and the noise warning then use the printed time. Wall/user/sys are still in `runs.csv`. A run that doesn't print a time counts as failed, so a crash can't show up as a really fast run. Same thing from `exec`: `--time-regex 'time_ms=([0-9.]+)' --time-unit ms`.
+
+## Env
+
+```yaml
+env:
+  PATH: /usr/local/cuda/bin:$PATH
+  OMP_NUM_THREADS: 8
+```
+
 ## Machine settings
 
 Everything under `machine:` gets recorded before the run and put back after, in an Ansible `always` block, so it gets restored even if the benchmark crashes. If a box doesn't support something (no cpufreq in a VM, no `nvidia-smi`, an SMT control the kernel won't let you touch), that setting is skipped and listed in the summary instead of failing the run.
@@ -96,7 +117,7 @@ Each run gets a folder in `results/`:
 ```
 results/2025-08-24T14-30-00_sorter/
   spec.yml        exactly what ran
-  runs.csv        one row per run: timings, params, metrics, perf counters
+  runs.csv        one row per run: time, wall/user/sys, params, metrics, perf counters
   summary.md      the table, plus noise warnings and notes
   gpu-box/
     sysinfo.json  cpu, kernel, governor/turbo/smt, compilers, gpu + driver
