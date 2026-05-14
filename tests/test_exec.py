@@ -177,3 +177,13 @@ def test_exec_time_from_output(target, tmp_path, capsys):
     assert "| target | default | 3 | 5.00ms | 5.00ms |" in out
     d = latest(tmp_path)
     assert all(r["wall_s"] > 0.3 and r["time_s"] == 0.005 for r in results_of(d))
+
+
+def test_output_timing_missing_time_is_a_failure(target, tmp_path, capsys):
+    assert main(["exec", "target", "-i", str(target), "--results", str(tmp_path), "-n", "2",
+                 "--time-regex", r"time_ms=([0-9.]+)", "--time-unit", "ms",
+                 "--", "echo forgot to print the time"]) == 0
+    out = capsys.readouterr().out
+    assert "2 printed no time" in out
+    # and it doesn't show up as some tiny median either
+    assert "| target | default | 2 | - | - |" in out

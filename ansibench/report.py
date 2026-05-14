@@ -64,8 +64,9 @@ def summarize(rows):
 
     out = []
     for (host, variant, params), runs in groups.items():
-        ok = [r for r in runs if r["exit_code"] == 0 and not r.get("timed_out")]
-        walls = [run_time(r) for r in ok if run_time(r) is not None]
+        no_time = [r for r in runs if r["exit_code"] == 0 and not r.get("timed_out") and run_time(r) is None]
+        ok = [r for r in runs if r["exit_code"] == 0 and not r.get("timed_out") and run_time(r) is not None]
+        walls = [run_time(r) for r in ok]
         s = {
             "host": host,
             "variant": variant,
@@ -73,6 +74,7 @@ def summarize(rows):
             "n": len(runs),
             "failed": len(runs) - len(ok),
             "timed_out": sum(1 for r in runs if r.get("timed_out")),
+            "no_time": len(no_time),
             "exit_codes": sorted({r["exit_code"] for r in runs if r["exit_code"] != 0 and not r.get("timed_out")}),
         }
         if walls:
@@ -118,9 +120,12 @@ def table(summary):
         note = []
         if s.get("timed_out"):
             note.append(f"{s['timed_out']} timed out")
-        if s["failed"] - s.get("timed_out", 0):
+        if s.get("no_time"):
+            note.append(f"{s['no_time']} printed no time")
+        crashed = s["failed"] - s.get("timed_out", 0) - s.get("no_time", 0)
+        if crashed:
             codes = ",".join(map(str, s.get("exit_codes", [])))
-            note.append(f"{s['failed'] - s.get('timed_out', 0)} failed (exit {codes})")
+            note.append(f"{crashed} failed (exit {codes})")
         if s.get("cv", 0) > NOISY_CV:
             note.append("noisy")
         cells = [s["host"], s["variant"]]
