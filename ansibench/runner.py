@@ -393,8 +393,10 @@ def cmd_bench(job, workdir):
     for i, r in enumerate(job.get("runs", [])):
         tag = f"{i:03d}_{r.get('variant', 'default')}"
         for w in range(warmup):
-            # warmups aren't recorded, output kept around in case they blow up
-            timed(r["cmd"], src, os.path.join(raw, f"{tag}.warmup{w}.stdout"),
+            # warmups aren't recorded, output kept around in case they blow up.
+            # pinned the same as the real runs or they warm the wrong cores
+            wcmd = pin + "bash -c " + shlex.quote(r["cmd"]) if pin else r["cmd"]
+            timed(wcmd, src, os.path.join(raw, f"{tag}.warmup{w}.stdout"),
                   os.path.join(raw, f"{tag}.warmup{w}.stderr"), timeout, env)
         for rep in range(repeat):
             stdout = os.path.join(raw, f"{tag}.rep{rep}.stdout")

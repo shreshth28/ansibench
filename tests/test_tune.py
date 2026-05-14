@@ -237,3 +237,11 @@ def test_no_nvidia_smi(tmp_path, monkeypatch):
     (tmp_path / "out").mkdir()
     runner.cmd_tune({"machine": {"gpu": {"persistence_mode": "on"}}}, str(tmp_path))
     assert "gpu: skipped, no nvidia-smi" in notes(tmp_path)
+
+
+def test_warmups_are_pinned_too(target, tmp_path):
+    j = {"name": "pinw", "builds": [], "repeat": 1, "warmup": 1, "machine": {"pin_cores": [1]},
+         "runs": [{"variant": "default", "params": {}, "cmd": "grep Cpus_allowed_list /proc/self/status"}]}
+    res = engine.run(j, target, "target", results_root=tmp_path)
+    (w,) = list((res / "target" / "raw").glob("*.warmup0.stdout"))
+    assert w.read_text().split()[-1] == "1"
